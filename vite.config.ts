@@ -17,7 +17,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/api": {
+      // Matches "/api/v1" specifically (not bare "/api") — the backend only
+      // ever serves versioned routes under /api/v1/*, and a bare "/api"
+      // prefix would collide with this project's own src/client/api/
+      // source folder, which Vite serves at the root-relative URL
+      // "/api/*" (root-relative to `root: "src/client"` above).
+      "/api/v1": {
         target: "http://localhost:3001",
         changeOrigin: true,
       },
