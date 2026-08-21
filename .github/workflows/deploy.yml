@@ -1,0 +1,66 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, qnap, linux]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t 192.168.2.106:5000/wake-on-lan:latest .
+
+      - name: Push image to local registry
+        run: |
+          docker push 192.168.2.106:5000/wake-on-lan:latest
+
+      - name: Stop and remove existing container
+        run: |
+          docker stop wake-on-lan || true
+          docker rm wake-on-lan || true
+
+      - name: Start new container
+        run: |
+          LOKI_PIPELINE='- json:
+              expressions:
+                service: service
+          - labels:
+              service:'
+          docker run -d \
+            --name wake-on-lan \
+            --network tesla-macvlan \
+            --ip 192.168.2.110 \
+            --restart unless-stopped \
+            --log-driver loki \
+            --log-opt loki-url="http://192.168.2.103:3100/loki/api/v1/push" \
+            --log-opt loki-batch-size="400" \
+            --log-opt loki-retries="3" \
+            --log-opt loki-timeout="2s" \
+            --log-opt keep-file="true" \
+            --log-opt "loki-pipeline-stages=${LOKI_PIPELINE}" \
+            -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
+            -e NODE_ENV=production \
+            -e PORT=3001 \
+            -e DB_HOST="${{ secrets.DB_HOST }}" \
+            -e DB_PORT="${{ secrets.DB_PORT }}" \
+            -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+            -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -e DB_NAME="${{ secrets.DB_NAME }}" \
+            -e DB_SCHEMA="${{ secrets.DB_SCHEMA }}" \
+            -e DB_SSL=true \
+            -e DB_SSL_CA_PATH=/app/db-certs/ca.crt \
+            -e REDIS_HOST="${{ secrets.REDIS_HOST }}" \
+            -e REDIS_PORT="${{ secrets.REDIS_PORT }}" \
+            -e REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            -e ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
+            -e WOL_DEFAULT_BROADCAST_ADDRESS="${{ secrets.WOL_DEFAULT_BROADCAST_ADDRESS }}" \
+            -e WOL_SEND_METHOD="${{ secrets.WOL_SEND_METHOD }}" \
+            192.168.2.106:5000/wake-on-lan:latest

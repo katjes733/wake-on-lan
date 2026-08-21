@@ -111,3 +111,10 @@ dist
 
 # TernJS port file
 .tern-port
+
+# TLS certs/keys (copied locally per-project to avoid cross-project coupling — never committed)
+postgres/certs/
+ssl/
+*.pem
+*.crt
+*.key
