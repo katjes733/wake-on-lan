@@ -26,6 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - [Security conventions for new routes](#security-conventions-for-new-routes)
     - [Wake write-order invariant](#wake-write-order-invariant)
     - [TypeORM raw query result shapes](#typeorm-raw-query-result-shapes)
+    - [CSP `upgradeInsecureRequests` and `crossOriginOpenerPolicy` are conditional on `sslEnabled`](#csp-upgradeinsecurerequests-and-crossoriginopenerpolicy-are-conditional-on-sslenabled)
     - [Accepted consume idempotency limitation](#accepted-consume-idempotency-limitation)
 
 ## Commands
@@ -80,6 +81,7 @@ Either way, any TLS cert the chosen mode needs must live in **this project's own
 | `DB_SSL` / `DB_SSL_CA_PATH` | Postgres TLS — enforced in both dev modes, not just production |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | Redis connection, used only for rate-limit counters (no sessions in v1) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins the API accepts cross-origin requests from |
+| `SSL_ENABLED` / `SSL_KEY_PATH` / `SSL_CERT_PATH` | Optional HTTPS for the app itself (default off) — see [README.md](README.md#https--self-signed-certificate) |
 | `WOL_DEFAULT_BROADCAST_ADDRESS` | Fallback broadcast address for targets with none configured |
 | `WOL_SEND_METHOD` | `dgram` \| `wakeonlan` \| `auto` (default) — see [Architecture](#architecture) |
 
@@ -251,6 +253,10 @@ router.post("/example", validateBody(ExampleSchema), async (req, res) => { ... }
 ### TypeORM raw query result shapes
 
 `dataSource.query()` returns **different shapes depending on statement type**: `SELECT`/`INSERT` return the rows array directly, but `UPDATE`/`DELETE` return a `[rows, rowCount]` tuple instead. A real bug shipped because `consumeWakeFlag()` checked `rows.length === 0` directly on that tuple (always `2`, never `0`), so the consume endpoint always reported `woken: true` regardless of whether a flag actually existed. Any new raw `dataSource.query()` call against `UPDATE`/`DELETE` must destructure as `const [rows] = await ds.query(...)`, not treat the result as a plain rows array. When mocking this in a test, mock the *exact* shape for the statement type being tested — see `tests/server/util/wol/wakeFlags.test.ts`.
+
+### CSP `upgradeInsecureRequests` and `crossOriginOpenerPolicy` are conditional on `sslEnabled`
+
+Helmet's `contentSecurityPolicy` includes the `upgrade-insecure-requests` directive **by default even when you pass your own custom `directives` object** — it merges with Helmet's defaults rather than replacing them. When `SSL_ENABLED` is off (this app is plain-HTTP-only unless explicitly configured otherwise), that directive tells the browser to upgrade every asset request to HTTPS, which then fails outright (`ERR_SSL_PROTOCOL_ERROR`) since there's no TLS listener — this broke the entire deployed app until caught by an actual browser-based check (`curl` alone won't catch it, since it doesn't enforce CSP). `main.ts` sets `upgradeInsecureRequests: null` and `crossOriginOpenerPolicy: false` specifically when `sslEnabled` is false, and lets both apply normally when `sslEnabled` is true. Don't remove this conditional without re-testing in an actual browser, not just via `curl`.
 
 ### Accepted consume idempotency limitation
 

@@ -7,6 +7,7 @@
     - [Running the app (local mode)](#running-the-app-local-mode)
     - [Running the app (remote mode)](#running-the-app-remote-mode)
   - [Environment variables](#environment-variables)
+  - [HTTPS / Self-Signed Certificate](#https--self-signed-certificate)
   - [API contract for the boot-time consumer](#api-contract-for-the-boot-time-consumer)
   - [Known limitation](#known-limitation)
   - [Deployment](#deployment)
@@ -98,8 +99,36 @@ The full list is in `env/sample.env` / `env/sample.remote.env`. The essentials:
 | `DB_SSL` / `DB_SSL_CA_PATH` | ✅ | Database connection encryption — required in both dev modes |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | ✅ | Used only to throttle repeated requests, nothing else |
 | `ALLOWED_ORIGINS` | — | Which browser origins are allowed to call the API (default covers local dev) |
+| `SSL_ENABLED` | — | Set to `true` to run the server over HTTPS instead of plain HTTP — see [HTTPS / Self-Signed Certificate](#https--self-signed-certificate) below |
+| `SSL_KEY_PATH` / `SSL_CERT_PATH` | — | Paths to the TLS private key/certificate, relative to the project root. Required if `SSL_ENABLED=true` |
 | `WOL_DEFAULT_BROADCAST_ADDRESS` | — | Fallback broadcast address used when a target doesn't have one set |
 | `WOL_SEND_METHOD` | — | Leave as `auto` unless debugging — picks the best way to send the magic packet automatically |
+
+## HTTPS / Self-Signed Certificate
+
+Running the server over HTTPS encrypts everything between the browser (or the HTPC's boot-time script) and this app — worth turning on for anything beyond a quick local test.
+
+1. Generate a self-signed certificate (one time — valid for 10 years, matching the same long-lived convention this project already uses for its local Postgres TLS cert; there's no external CA policy forcing a shorter validity on a self-signed cert, so there's little reason to make yourself regenerate and redeploy it annually):
+
+   ```sh
+   mkdir -p ssl
+   openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem -out ssl/cert.pem \
+     -days 3650 -nodes \
+     -subj "/CN=localhost" \
+     -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+   ```
+
+   > **Note:** the `ssl/` directory is gitignored — never commit private keys.
+
+2. Set in `.env`:
+
+   ```dotenv
+   SSL_ENABLED=true
+   SSL_KEY_PATH=ssl/key.pem
+   SSL_CERT_PATH=ssl/cert.pem
+   ```
+
+3. Restart the app. Since the certificate is self-signed, your browser will show a security warning the first time you visit — click through it (e.g. "Advanced" → "Proceed" in Chrome/Edge, "Advanced" → "Accept the Risk and Continue" in Firefox). This is expected and only needs doing once per browser.
 
 ## API contract for the boot-time consumer
 
@@ -138,8 +167,9 @@ If the `woken: true` response above is lost in transit — say, the device's net
 ### One-time setup
 
 1. **Allocate a static LAN IP** for the container — this app is deployed on the same `tesla-macvlan` Docker network as `tesla-powerwall-automation`, at a dedicated address (`192.168.2.110`) so it's reachable directly on the LAN like any other device.
-2. **Set the GitHub Secrets** the deploy workflow needs: `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `DB_SCHEMA`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `ALLOWED_ORIGINS`, `WOL_DEFAULT_BROADCAST_ADDRESS`, `WOL_SEND_METHOD` — `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`/`REDIS_*` mirror the secret set `tesla-powerwall-automation` already has configured, since both apps talk to the same underlying database and cache; `DB_NAME` should be `postgres` and `DB_SCHEMA` should be `wake_on_lan` (see [Environment variables](#environment-variables)); `WOL_DEFAULT_BROADCAST_ADDRESS` is your LAN's broadcast address (e.g. `192.168.2.255`) and `WOL_SEND_METHOD` should normally be `auto`.
-3. **Nothing to run for the database schema** — the app creates its own `wake_on_lan` schema and tables automatically the first time it starts, via `synchronize()`. There's no separate migration step to run.
+2. **Set the GitHub Secrets** the deploy workflow needs: `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`, `DB_SCHEMA`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `ALLOWED_ORIGINS`, `WOL_DEFAULT_BROADCAST_ADDRESS`, `WOL_SEND_METHOD` — `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`/`REDIS_*` mirror the secret set `tesla-powerwall-automation` already has configured, since both apps talk to the same underlying database and cache; `DB_NAME` should be `postgres` and `DB_SCHEMA` should be `wake_on_lan` (see [Environment variables](#environment-variables)); `WOL_DEFAULT_BROADCAST_ADDRESS` is your LAN's broadcast address (e.g. `192.168.2.255`) and `WOL_SEND_METHOD` should normally be `auto`. Once HTTPS is enabled in production (see below), `ALLOWED_ORIGINS` should use `https://` instead of `http://`.
+3. **Generate a production TLS certificate** and place it where the deploy workflow expects it — mounted from the NAS host into the container at `/app/ssl` (see [HTTPS / Self-Signed Certificate](#https--self-signed-certificate) for how to generate one; the same steps apply, just run on the NAS rather than your dev machine).
+4. **Nothing to run for the database schema** — the app creates its own `wake_on_lan` schema and tables automatically the first time it starts, via `synchronize()`. There's no separate migration step to run.
 
 ### Day-to-day deploys
 
@@ -148,18 +178,20 @@ Deployment is automatic: merging to `main` triggers `.github/workflows/deploy.ym
 ```sh
 docker run -d --name wake-on-lan --network tesla-macvlan --ip 192.168.2.110 \
   -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
+  -v /share/Container/container-data/wake-on-lan/certs:/app/ssl:ro \
   -e NODE_ENV=production -e PORT=3001 \
   -e DB_HOST=<host> -e DB_PORT=<port> -e DB_USERNAME=<user> -e DB_PASSWORD=<password> \
   -e DB_NAME=postgres -e DB_SCHEMA=wake_on_lan -e DB_SSL=true -e DB_SSL_CA_PATH=/app/db-certs/ca.crt \
   -e REDIS_HOST=<host> -e REDIS_PORT=<port> -e REDIS_PASSWORD=<password> \
   -e ALLOWED_ORIGINS=<origins> \
+  -e SSL_ENABLED=true -e SSL_KEY_PATH=ssl/key.pem -e SSL_CERT_PATH=ssl/cert.pem \
   -e WOL_DEFAULT_BROADCAST_ADDRESS=192.168.2.255 -e WOL_SEND_METHOD=auto \
   192.168.2.106:5000/wake-on-lan:latest
 ```
 
 ### Post-deploy verification
 
-1. Confirm the container is healthy: `curl http://192.168.2.110:3001/api/v1/health/status-server` and `.../status-db` should both return `{"status":"ok", ...}`.
+1. Confirm the container is healthy: `curl -k https://192.168.2.110:3001/api/v1/health/status-server` and `.../status-db` should both return `{"status":"ok", ...}` (`-k` skips the self-signed certificate check — expected for `curl`, but your browser will need the one-time click-through described in [HTTPS / Self-Signed Certificate](#https--self-signed-certificate)).
 2. Run through the real wake→consume flow once against a real device to confirm the deployed container (not just your local dev setup) can actually send a magic packet and record/consume the flag correctly.
 
 ### Grafana dashboard

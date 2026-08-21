@@ -47,6 +47,7 @@ jobs:
             --log-opt keep-file="true" \
             --log-opt "loki-pipeline-stages=${LOKI_PIPELINE}" \
             -v /share/Container/container-data/postgres-certs:/app/db-certs:ro \
+            -v /share/Container/container-data/wake-on-lan/certs:/app/ssl:ro \
             -e NODE_ENV=production \
             -e PORT=3001 \
             -e DB_HOST="${{ secrets.DB_HOST }}" \
@@ -61,6 +62,9 @@ jobs:
             -e REDIS_PORT="${{ secrets.REDIS_PORT }}" \
             -e REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
             -e ALLOWED_ORIGINS="${{ secrets.ALLOWED_ORIGINS }}" \
+            -e SSL_ENABLED=true \
+            -e SSL_KEY_PATH=ssl/key.pem \
+            -e SSL_CERT_PATH=ssl/cert.pem \
             -e WOL_DEFAULT_BROADCAST_ADDRESS="${{ secrets.WOL_DEFAULT_BROADCAST_ADDRESS }}" \
             -e WOL_SEND_METHOD="${{ secrets.WOL_SEND_METHOD }}" \
             192.168.2.106:5000/wake-on-lan:latest
