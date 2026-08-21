@@ -8,12 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - [Architecture](#architecture)
     - [Request flow](#request-flow)
     - [Wake trigger and consume flow](#wake-trigger-and-consume-flow)
+    - [Windows agent](#windows-agent)
   - [Grafana dashboard](#grafana-dashboard)
   - [Testing](#testing)
     - [Test runner](#test-runner)
     - [Module mocking](#module-mocking)
     - [HTTP route tests](#http-route-tests)
     - [Frontend component tests](#frontend-component-tests)
+    - [Agent tests](#agent-tests)
     - [Logger silencing](#logger-silencing)
     - [Environment variables in tests](#environment-variables-in-tests)
   - [Accepted security findings](#accepted-security-findings)
@@ -28,6 +30,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - [TypeORM raw query result shapes](#typeorm-raw-query-result-shapes)
     - [CSP `upgradeInsecureRequests` and `crossOriginOpenerPolicy` are conditional on `sslEnabled`](#csp-upgradeinsecurerequests-and-crossoriginopenerpolicy-are-conditional-on-sslenabled)
     - [Accepted consume idempotency limitation](#accepted-consume-idempotency-limitation)
+    - [AgentConfig/AgentStatus are separate entities, not columns on Target](#agentconfigagentstatus-are-separate-entities-not-columns-on-target)
+    - [shutdownEnabled is checked server-side at trigger time](#shutdownenabled-is-checked-server-side-at-trigger-time)
+    - [No auth — script references are an accepted, bounded risk](#no-auth--script-references-are-an-accepted-bounded-risk)
 
 ## Commands
 
@@ -84,6 +89,7 @@ Either way, any TLS cert the chosen mode needs must live in **this project's own
 | `SSL_ENABLED` / `SSL_KEY_PATH` / `SSL_CERT_PATH` | Optional HTTPS for the app itself (default off) — see [README.md](README.md#https--self-signed-certificate) |
 | `WOL_DEFAULT_BROADCAST_ADDRESS` | Fallback broadcast address for targets with none configured |
 | `WOL_SEND_METHOD` | `dgram` \| `wakeonlan` \| `auto` (default) — see [Architecture](#architecture) |
+| `AGENT_STALE_THRESHOLD_SECONDS` | Default `90`. How long since the last heartbeat before `toApiTarget()` reports `online: false`. |
 
 ## Architecture
 
@@ -95,28 +101,43 @@ flowchart LR
     Redis[("Redis\n(rate limiting only, prefix wol:rl:)")]
     LAN["LAN broadcast (UDP magic packet)"]
     Target["Target machine NIC"]
+    Agent["Windows agent\n(service + logon-triggered task)"]
 
-    Browser -->|CRUD, wake| API
+    Browser -->|CRUD, wake, shutdown, agent config| API
     API --> PG
     API --> Redis
     API -->|send magic packet| LAN --> Target
-    Target -->|POST .../wol-flag/consume on boot| API
+    Agent -->|status, wol-flag/consume, shutdown-flag/consume, agent-config| API
 ```
 
 - **`src/server/`** — Express app, routes, TypeORM entities, WOL send logic
 - **`src/client/`** — React 19 + Vite + MUI 7 frontend
 - **`src/shared/`** — Zod schemas imported by both server (`validateBody` middleware) and client (form validation)
+- **`src/agent/`** — the standalone Windows agent, compiled separately via `bun build --compile` (see [Windows agent](#windows-agent) below) — not part of the server bundle, does not use the global `logger`
 - **`src/server/bootstrap/logger-global.ts`** — loaded by `bunfig.toml` preload; injects `logger` (Pino) as a global — no import needed anywhere in server code
 
 ### Request flow
 
-Express routes in `src/server/routes/` delegate to DB accessor functions in `src/server/util/routes/` (thin wrappers over TypeORM repositories) for CRUD, and to `src/server/util/wol/` for anything WOL-specific (sending packets, arming/consuming the wake flag). `src/server/util/wol/*` is deliberately isolated from Express/TypeORM so `scripts/spike-wol.ts` can import and reuse the exact same sending code the app uses.
+Express routes in `src/server/routes/` delegate to DB accessor functions in `src/server/util/routes/` (thin wrappers over TypeORM repositories) for CRUD, and to `src/server/util/wol/` for anything WOL-specific (sending packets, arming/consuming the wake/shutdown flags). `src/server/util/agent/` holds the equivalent accessors for `AgentConfig`/`AgentStatus`. `src/server/util/wol/*` is deliberately isolated from Express/TypeORM so `scripts/spike-wol.ts` can import and reuse the exact same sending code the app uses.
 
 ### Wake trigger and consume flow
 
 `POST /api/v1/targets/:id/wake` writes the DB flag (`armWakeFlag`) **before** sending the UDP packet — never the other order. If the DB write happened after the send, a crash between send and write could leave a real WOL boot with no fresh `triggered_at` row, causing the target's consume call to wrongly report `woken: false`. The reverse failure (flag written, send throws) is harmless — the target never powers on, so nothing calls consume against the orphaned row.
 
-`POST /api/v1/targets/:id/wol-flag/consume` is a single atomic `UPDATE ... RETURNING` (see `util/wol/wakeFlags.ts`) — no transaction needed, Postgres's MVCC makes the check-and-consume atomic on its own.
+`POST /api/v1/targets/:id/wol-flag/consume` is a single atomic `UPDATE ... RETURNING` (see `util/wol/wakeFlags.ts`) — no transaction needed, Postgres's MVCC makes the check-and-consume atomic on its own. `POST /api/v1/targets/:id/shutdown-flag/consume` (`util/wol/shutdownFlags.ts`) is the exact same pattern for shutdown, in its own dedicated table (`shutdown_flags`) rather than a shared/generalized one — this codebase prefers a dedicated entity+function pair per concern over one generic mechanism (see `WakeFlag`/`ShutdownFlag`).
+
+### Windows agent
+
+`src/agent/` is a **separate compiled binary**, not part of the server — built via `bun build --compile --minify --outfile=... src/agent/main.ts` (native on the target OS; cross-compilable from any OS via `--target=bun-windows-x64`, verified). It ships in two modes, dispatched by a `--mode=service|boot-hooks` CLI flag on the one binary:
+
+- **`--mode=service`** (`src/agent/service.ts`) — a Windows Service (NSSM-wrapped, see `installer/`), starts at boot before any login. Heartbeat (`POST /status`) + shutdown-flag polling only. Never touches scripts or `wol-flag/consume`.
+- **`--mode=boot-hooks`** (`src/agent/bootHooks.ts`) — a Scheduled Task firing on **any** user's logon (`installer/boot-hooks-task.xml`, `GroupId` `S-1-1-0` = "Everyone"), running with that user's own rights, never SYSTEM. The only mode that runs local scripts or calls `wol-flag/consume`.
+
+**Why two modes, not one**: Windows services run in Session 0, isolated from the interactive desktop — a service can never reliably do anything that needs real desktop-session access, which local scripts (e.g. a CEC command) may need. But heartbeat/status needs the opposite property: it must run continuously from boot, including while sitting at a login screen with nobody signed in, or "online" would read false the whole time. Splitting into two execution contexts satisfies both without compromising either. Do not move script execution or `wol-flag/consume` into the service, or heartbeat/shutdown-polling into boot-hooks, without re-reading this.
+
+**`withinSeconds` for the boot-time `wol-flag/consume` check is computed from `os.uptime()`**, not a fixed constant (`src/agent/util/computeWolWithinSeconds.ts`, called from `bootHooks.ts`): `Math.ceil(os.uptime()) + BOOT_BUFFER_SECONDS`. This check runs at *login*, not raw boot, and the boot→login gap is not a rare edge case — waking a machine remotely well before physically logging in is the central use case this whole app exists for, so the gap can legitimately be tens of minutes. Deriving the window from the agent's own uptime (a duration, not an absolute timestamp) makes it exactly as large as it needs to be for that specific boot, with no cross-machine clock-sync dependency. `FlagConsumeSchema`'s `withinSeconds` cap was raised from `3600` to `14400` accordingly — only an unusually long multi-hour gap still hits it.
+
+The agent logs to a local file **and** pushes directly to Loki's HTTP push API (`src/agent/log.ts`) — no Docker log driver involved, since the agent isn't a container. The local file write always happens first and is the one thing that never depends on the network; the Loki push (`lokiPushUrl`, from the server-managed `AgentConfig`, not local config) is always best-effort/fire-and-forget. See [Grafana dashboard](#grafana-dashboard) for the resulting `{service="agent"}` stream selector, distinct from every other panel's `{container_name="wake-on-lan"}`.
 
 ## Grafana dashboard
 
@@ -130,7 +151,13 @@ Express routes in `src/server/routes/` delegate to DB accessor functions in `src
 | `msg="Magic packet sent"` / `"Magic packet send failed"`, `method` | Magic Packet Send Success/Failure |
 | `msg="Wake flag consume checked"`, `result` | Consume Outcomes Over Time |
 | `msg="Rate limit exceeded"` | Rate Limit Hits |
+| `msg="Shutdown requested"` / `"Shutdown flag armed"` | Shutdown Triggered / Armed |
+| `msg="Shutdown flag consume checked"`, `result` | Shutdown Consume Outcomes |
+| `msg="Agent heartbeat received"` (server) / `"Heartbeat sent"` (agent, `{service="agent"}`) | Agent Heartbeat Rate |
+| `{service="agent"}`, `level="error"` | Agent Errors |
 | `service="db"` | System Health / DB Errors |
+
+The `{service="agent"}` panels read a **different stream selector** than everything else — the agent pushes directly to Loki's HTTP API (`src/agent/log.ts`), not through Docker's log driver, so there's no `container_name` label on those lines at all. See `grafana-dashboards/README.md`'s Prerequisites section.
 
 ## Testing
 
@@ -169,6 +196,14 @@ Use `supertest` to exercise an Express `Router` in isolation rather than importi
 ### Frontend component tests
 
 Component tests live in `tests/client/` (mirroring `tests/server/`) and use `@testing-library/react` + `jsdom`. Opt into jsdom per file via `/** @vitest-environment jsdom */` as the first line — the project's default Vitest environment is `node` (needed for server tests). Mock `TargetsContext`/`useNotification` rather than wrapping components in real providers.
+
+### Agent tests
+
+`src/agent/` isn't unit-testable via `vi.mock()` the same way server code is, since it's a standalone compiled binary with no global `logger` and no DI container. Instead:
+
+- Pure logic (`src/agent/util/*.ts`) takes its dependencies as plain function parameters with sensible defaults — e.g. `runScriptIfConfigured(scriptPath, spawn = (cmd) => Bun.spawn(cmd))` — so a test just passes a `vi.fn()` in place of the default, no module mocking needed.
+- `src/agent/log.ts`'s `createLogger()` takes `{ appendFile, fetchFn }` as an explicit `deps` argument for the same reason — see `tests/agent/log.test.ts` for the pattern (always assert the local file write happens even when the injected `fetchFn` rejects).
+- `service.ts`/`bootHooks.ts`/`main.ts` are orchestration only and aren't unit tested, matching how the server's own `main.ts` isn't tested either — verify these by actually running the compiled/interpreted agent against a local dev backend (`bun run src/agent/main.ts --mode=service --config=<path>`) instead.
 
 ### Logger silencing
 
@@ -261,3 +296,15 @@ Helmet's `contentSecurityPolicy` includes the `upgrade-insecure-requests` direct
 ### Accepted consume idempotency limitation
 
 If a genuine `{ woken: true }` response from `/wol-flag/consume` is lost in transit after the underlying `UPDATE` already committed, a retry sees `consumed_at IS NOT NULL` and gets a false `woken: false`. This is an accepted, documented limitation for v1 (see the README) — not something to "fix" with a client-supplied `attemptId`/replay mechanism without first discussing the tradeoff with the user, since that was a deliberate scope decision, not an oversight.
+
+### AgentConfig/AgentStatus are separate entities, not columns on Target
+
+Agent-related data lives in two dedicated 1:1-per-target tables — `AgentConfig` (admin-set, a `config jsonb` column validated against `AgentConfigSchema`) and `AgentStatus` (agent-reported `last_seen_at`/`agent_version`) — rather than as columns on `Target` itself. Two reasons: it matches this codebase's existing convention of dedicated per-concern entities (`WakeFlag`, `ShutdownFlag`) over widening a core entity, and it keeps frequent heartbeat writes (every ~30s) from contending with infrequent config edits on the same row. `listTargets()`/`getTargetById()` in `util/routes/targets.ts` are unaware of either table — the route handlers in `routes/targets.ts` fetch both alongside the target (in parallel via `Promise.all`) and pass them into `toApiTarget()`. With a handful of home-lab targets this N+1-style fetch is a non-issue; batch it by target-id list only if that ever stops being true.
+
+### shutdownEnabled is checked server-side at trigger time
+
+`POST /:id/shutdown` calls `getAgentConfig()` and returns `400` if `shutdownEnabled` is false, **before** arming the flag — it does not rely on the agent's own poll-side check as the only gate. A target's actual capability is `shutdownEnabled`, not just whether an agent happens to be reporting online, so the trigger route is where this must be enforced. Don't remove this check on the theory that "the agent won't act on it anyway" — the point is a clear `400` instead of a silently-armed, never-consumed flag.
+
+### No auth — script references are an accepted, bounded risk
+
+Every route in this app, including the new `/shutdown`, `/agent-config`, and `/status` routes, is unauthenticated — the LAN itself is the trust boundary, matching `/wake`'s existing precedent, a deliberate decision (not an oversight) made when this feature was added. The one place this needed a specific design answer: `AgentConfig.defaultScript`/`wolScript` let the (unauthenticated) web UI point the agent at a local script to run. The server never sends script *content* — only ever a path/reference the agent runs on its own machine via `runScriptIfConfigured()`. So the actual exposure is bounded to "redirect execution to something that already exists on this specific machine," never "inject new code" — accepted as consistent with the no-auth decision, not something to silently harden with an auth layer without discussing the tradeoff first.

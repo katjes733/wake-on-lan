@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <!--
+    Fires on ANY user's logon (empty LogonTrigger.UserId, paired with the
+    "Everyone" well-known SID S-1-1-0 as the principal's GroupId below) and
+    runs with THAT user's own rights — never SYSTEM, never a fixed account.
+    This is the one execution context with real desktop-session access,
+    which is why script execution and wol-flag/consume both live here
+    rather than in the SYSTEM service (see src/agent/bootHooks.ts).
+
+    {{APP_DIR}} is substituted with the real install path by the installer
+    at install time (see [Code] in wake-on-lan-agent.iss) — this file as
+    checked into the repo is a template, not the task actually registered.
+  -->
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId></UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <GroupId>S-1-1-0</GroupId>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{{APP_DIR}}\wake-on-lan-agent.exe</Command>
+      <Arguments>--mode=boot-hooks</Arguments>
+      <WorkingDirectory>{{APP_DIR}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

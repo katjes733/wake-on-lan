@@ -123,3 +123,8 @@ ssl/
 *.pem
 *.crt
 *.key
+
+# Agent installer build artifacts — fetched/compiled by
+# .github/workflows/build-agent-installer.yml, never committed
+/installer/vendor/
+/installer/Output/
