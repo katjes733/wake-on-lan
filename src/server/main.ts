@@ -1,4 +1,7 @@
 import path from "path";
+import http from "http";
+import https from "https";
+import fs from "fs";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
@@ -26,6 +29,13 @@ if (!process.env.REDIS_HOST) {
 }
 if (!process.env.ALLOWED_ORIGINS) {
   throw new Error("ALLOWED_ORIGINS environment variable is required");
+}
+
+const sslEnabled = process.env.SSL_ENABLED === "true";
+if (sslEnabled && (!process.env.SSL_KEY_PATH || !process.env.SSL_CERT_PATH)) {
+  throw new Error(
+    "SSL_KEY_PATH and SSL_CERT_PATH must be set when SSL_ENABLED=true",
+  );
 }
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",")
@@ -57,8 +67,16 @@ app.use(
         imgSrc: ["'self'", "data:"],
         fontSrc: ["'self'", "data:"],
         connectSrc: ["'self'"],
+        // Helmet includes this directive by default even with a custom
+        // directives object — it tells the browser to upgrade every
+        // subresource request to HTTPS. Only safe when we actually have a
+        // TLS listener; otherwise every asset load fails with
+        // ERR_SSL_PROTOCOL_ERROR.
+        ...(sslEnabled ? {} : { upgradeInsecureRequests: null }),
       },
     },
+    // Meaningless (and generates a console warning) without HTTPS.
+    ...(sslEnabled ? {} : { crossOriginOpenerPolicy: false }),
   }),
 );
 
@@ -125,6 +143,22 @@ app.use(
 );
 
 const port = parseInt(process.env.PORT || "3001", 10);
-app.listen(port, () => {
-  logger.info({ port }, "Server listening");
+
+let server: http.Server | https.Server;
+if (sslEnabled) {
+  server = https.createServer(
+    {
+      key: fs.readFileSync(process.env.SSL_KEY_PATH!),
+      cert: fs.readFileSync(process.env.SSL_CERT_PATH!),
+    },
+    app,
+  );
+  logger.info("SSL is enabled. Running server with HTTPS.");
+} else {
+  server = http.createServer(app);
+  logger.info("SSL is not enabled. Running server with HTTP.");
+}
+
+server.listen(port, () => {
+  logger.info({ port, ssl: sslEnabled }, "Server listening");
 });
