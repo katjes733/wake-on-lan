@@ -12,6 +12,12 @@ const {
   mockSendMagicPacket,
   mockArmWakeFlag,
   mockConsumeWakeFlag,
+  mockArmShutdownFlag,
+  mockConsumeShutdownFlag,
+  mockGetAgentConfig,
+  mockUpsertAgentConfig,
+  mockRecordHeartbeat,
+  mockGetAgentStatus,
 } = vi.hoisted(() => ({
   mockListTargets: vi.fn(),
   mockGetTargetById: vi.fn(),
@@ -22,6 +28,12 @@ const {
   mockSendMagicPacket: vi.fn(),
   mockArmWakeFlag: vi.fn(),
   mockConsumeWakeFlag: vi.fn(),
+  mockArmShutdownFlag: vi.fn(),
+  mockConsumeShutdownFlag: vi.fn(),
+  mockGetAgentConfig: vi.fn(),
+  mockUpsertAgentConfig: vi.fn(),
+  mockRecordHeartbeat: vi.fn(),
+  mockGetAgentStatus: vi.fn(),
 }));
 
 vi.mock("~/server/util/routes/targets", () => ({
@@ -42,20 +54,37 @@ vi.mock("~/server/util/wol/wakeFlags", () => ({
   consumeWakeFlag: mockConsumeWakeFlag,
 }));
 
+vi.mock("~/server/util/wol/shutdownFlags", () => ({
+  armShutdownFlag: mockArmShutdownFlag,
+  consumeShutdownFlag: mockConsumeShutdownFlag,
+}));
+
+vi.mock("~/server/util/agent/agentConfig", () => ({
+  getAgentConfig: mockGetAgentConfig,
+  upsertAgentConfig: mockUpsertAgentConfig,
+}));
+
+vi.mock("~/server/util/agent/agentStatus", () => ({
+  recordHeartbeat: mockRecordHeartbeat,
+  getAgentStatus: mockGetAgentStatus,
+}));
+
 // Rate limiting talks to a real Redis client — irrelevant at this layer and
 // would otherwise require a live Redis for these tests to even run.
-vi.mock("~/server/middleware/rateLimiter", () => ({
-  wakeLimiter: (
+vi.mock("~/server/middleware/rateLimiter", () => {
+  const passthrough = (
     req: express.Request,
     res: express.Response,
     next: express.NextFunction,
-  ) => next(),
-  consumeLimiter: (
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-  ) => next(),
-}));
+  ) => next();
+  return {
+    wakeLimiter: passthrough,
+    consumeLimiter: passthrough,
+    shutdownLimiter: passthrough,
+    shutdownConsumeLimiter: passthrough,
+    statusLimiter: passthrough,
+  };
+});
 
 const { router } = await import("~/server/routes/targets");
 
@@ -87,16 +116,29 @@ const baseTarget = {
   modified_time: new Date("2026-01-01T00:00:00Z"),
 };
 
+const emptyAgentStatus = { lastSeenAt: null, agentVersion: null };
+
+const baseAgentConfig = {
+  wolAware: false,
+  defaultScript: null,
+  wolScript: null,
+  shutdownEnabled: false,
+  pollIntervalSeconds: null,
+  lokiPushUrl: null,
+};
+
 describe("targets router", () => {
   let app: express.Express;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetAgentStatus.mockResolvedValue(emptyAgentStatus);
+    mockGetAgentConfig.mockResolvedValue(baseAgentConfig);
     app = buildApp();
   });
 
   describe("GET /", () => {
-    it("returns all targets mapped to the API (camelCase) shape", async () => {
+    it("returns all targets mapped to the API (camelCase) shape, including agent status/config", async () => {
       mockListTargets.mockResolvedValue([baseTarget]);
       const res = await request(app).get("/api/v1/targets");
       expect(res.status).toBe(200);
@@ -110,8 +152,33 @@ describe("targets router", () => {
           notes: null,
           createdAt: baseTarget.creation_time.toISOString(),
           updatedAt: baseTarget.modified_time.toISOString(),
+          lastSeenAt: null,
+          online: false,
+          agentVersion: null,
+          agentConfig: baseAgentConfig,
         },
       ]);
+    });
+
+    it("reports online:true when the last heartbeat is within the staleness threshold", async () => {
+      mockListTargets.mockResolvedValue([baseTarget]);
+      mockGetAgentStatus.mockResolvedValue({
+        lastSeenAt: new Date(),
+        agentVersion: "1.0.0",
+      });
+      const res = await request(app).get("/api/v1/targets");
+      expect(res.body[0].online).toBe(true);
+      expect(res.body[0].agentVersion).toBe("1.0.0");
+    });
+
+    it("reports online:false when the last heartbeat is older than the staleness threshold", async () => {
+      mockListTargets.mockResolvedValue([baseTarget]);
+      mockGetAgentStatus.mockResolvedValue({
+        lastSeenAt: new Date(Date.now() - 10 * 60 * 1000),
+        agentVersion: "1.0.0",
+      });
+      const res = await request(app).get("/api/v1/targets");
+      expect(res.body[0].online).toBe(false);
     });
   });
 
@@ -127,6 +194,7 @@ describe("targets router", () => {
       const res = await request(app).get(`/api/v1/targets/${baseTarget.id}`);
       expect(res.status).toBe(200);
       expect(res.body.name).toBe("HTPC");
+      expect(res.body.agentConfig).toEqual(baseAgentConfig);
     });
   });
 
@@ -337,6 +405,194 @@ describe("targets router", () => {
 
       expect(first.body.woken).toBe(true);
       expect(second.body.woken).toBe(false);
+    });
+
+    it("accepts a withinSeconds value above the old 3600 cap, up to the new 14400 cap", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeWakeFlag.mockResolvedValue({ woken: false });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/wol-flag/consume`)
+        .send({ withinSeconds: 7200 });
+
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe("POST /:id/shutdown", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app).post(
+        `/api/v1/targets/${baseTarget.id}/shutdown`,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 when shutdownEnabled is false for this target", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockGetAgentConfig.mockResolvedValue({
+        ...baseAgentConfig,
+        shutdownEnabled: false,
+      });
+
+      const res = await request(app).post(
+        `/api/v1/targets/${baseTarget.id}/shutdown`,
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockArmShutdownFlag).not.toHaveBeenCalled();
+    });
+
+    it("arms the shutdown flag when shutdownEnabled is true", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockGetAgentConfig.mockResolvedValue({
+        ...baseAgentConfig,
+        shutdownEnabled: true,
+      });
+      const triggeredAt = new Date("2026-01-01T00:00:01Z");
+      mockArmShutdownFlag.mockResolvedValue({ triggeredAt });
+
+      const res = await request(app).post(
+        `/api/v1/targets/${baseTarget.id}/shutdown`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ triggeredAt: triggeredAt.toISOString() });
+    });
+  });
+
+  describe("POST /:id/shutdown-flag/consume", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns shutdown:false when there is no fresh unconsumed flag", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeShutdownFlag.mockResolvedValue({ shutdown: false });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ shutdown: false });
+    });
+
+    it("returns shutdown:true with triggeredAt when a fresh flag is consumed", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      const triggeredAt = new Date("2026-01-01T00:00:01Z");
+      mockConsumeShutdownFlag.mockResolvedValue({
+        shutdown: true,
+        triggeredAt,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        shutdown: true,
+        triggeredAt: triggeredAt.toISOString(),
+      });
+    });
+
+    it("already-consumed: a second call against the same flag returns shutdown:false", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeShutdownFlag
+        .mockResolvedValueOnce({ shutdown: true, triggeredAt: new Date() })
+        .mockResolvedValueOnce({ shutdown: false });
+
+      const first = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+      const second = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(first.body.shutdown).toBe(true);
+      expect(second.body.shutdown).toBe(false);
+    });
+  });
+
+  describe("POST /:id/status", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/status`)
+        .send({});
+      expect(res.status).toBe(404);
+    });
+
+    it("records the heartbeat and returns 204", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/status`)
+        .send({ agentVersion: "1.2.3" });
+
+      expect(res.status).toBe(204);
+      expect(mockRecordHeartbeat).toHaveBeenCalledWith(baseTarget.id, "1.2.3");
+    });
+  });
+
+  describe("GET /:id/agent-config", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app).get(
+        `/api/v1/targets/${baseTarget.id}/agent-config`,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("returns the target's agent config", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockGetAgentConfig.mockResolvedValue({
+        ...baseAgentConfig,
+        wolAware: true,
+      });
+
+      const res = await request(app).get(
+        `/api/v1/targets/${baseTarget.id}/agent-config`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.wolAware).toBe(true);
+    });
+  });
+
+  describe("PUT /:id/agent-config", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app)
+        .put(`/api/v1/targets/${baseTarget.id}/agent-config`)
+        .send({});
+      expect(res.status).toBe(404);
+    });
+
+    it("upserts the agent config and echoes it back", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+
+      const res = await request(app)
+        .put(`/api/v1/targets/${baseTarget.id}/agent-config`)
+        .send({
+          wolAware: true,
+          shutdownEnabled: true,
+          wolScript: "C:\\a.ps1",
+        });
+
+      expect(res.status).toBe(200);
+      expect(mockUpsertAgentConfig).toHaveBeenCalledWith(
+        baseTarget.id,
+        expect.objectContaining({
+          wolAware: true,
+          shutdownEnabled: true,
+          wolScript: "C:\\a.ps1",
+        }),
+      );
     });
   });
 
