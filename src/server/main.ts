@@ -1,3 +1,4 @@
+import path from "path";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
@@ -76,6 +77,35 @@ app.use(express.json({ limit: "100kb" }));
 
 app.use("/api/v1/health", HealthRouter);
 app.use("/api/v1/targets", TargetsRouter);
+
+// Serves the built React frontend. In dev, Vite's own dev server handles the
+// frontend instead (see vite.config.ts's /api/v1 proxy), so this is skipped
+// there. Must be registered after the API routes so unmatched requests fall
+// through to the SPA here, not the other way around.
+if (process.env.NODE_ENV !== "development") {
+  logger.info("Serving static files from 'public' directory");
+
+  const NEVER_CACHE = "no-cache, no-store, must-revalidate";
+  app.use(
+    express.static(path.join(process.cwd(), "public"), {
+      setHeaders: (res, filePath) => {
+        if (path.basename(filePath) === "index.html") {
+          res.setHeader("Cache-Control", NEVER_CACHE);
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
+
+  app.use((_req, res) => {
+    res.sendFile(path.join(process.cwd(), "public", "index.html"), {
+      headers: { "Cache-Control": NEVER_CACHE },
+    });
+  });
+} else {
+  logger.info("Not in production mode");
+}
 
 app.use(
   (

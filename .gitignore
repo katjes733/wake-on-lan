@@ -15,6 +15,11 @@ package-json.lock
 # bun deploy file
 node_modules.bun
 
+# build output (bun run build / build-client) — root-anchored so this
+# doesn't also match src/client/public/ (real, committed source assets)
+/build/
+/public/
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
