@@ -14,6 +14,7 @@
     - [One-time setup](#one-time-setup)
     - [Day-to-day deploys](#day-to-day-deploys)
     - [Post-deploy verification](#post-deploy-verification)
+    - [Reaching the app via a friendlier local hostname](#reaching-the-app-via-a-friendlier-local-hostname)
     - [Grafana dashboard](#grafana-dashboard)
 
 ## Overview
@@ -193,6 +194,12 @@ docker run -d --name wake-on-lan --network tesla-macvlan --ip 192.168.2.110 \
 
 1. Confirm the container is healthy: `curl -k https://192.168.2.110:3001/api/v1/health/status-server` and `.../status-db` should both return `{"status":"ok", ...}` (`-k` skips the self-signed certificate check — expected for `curl`, but your browser will need the one-time click-through described in [HTTPS / Self-Signed Certificate](#https--self-signed-certificate)).
 2. Run through the real wake→consume flow once against a real device to confirm the deployed container (not just your local dev setup) can actually send a magic packet and record/consume the flag correctly.
+
+### Reaching the app via a friendlier local hostname
+
+Typing an IP and port every time gets old. This app is also reachable on the LAN via a friendlier hostname, through the same shared Caddy instance `tesla-powerwall-automation` already uses — scoped to the local network only, with no public DNS record and no router changes involved. The actual hostname is intentionally left out of this public repo; see whoever manages the NAS for it.
+
+See [docs/reverse-proxy-tls-setup.md](docs/reverse-proxy-tls-setup.md) for the full setup (Caddy site block, Pi-hole local DNS record, and the path to going fully public later) along with the gotchas specific to this app — most notably that `ALLOWED_ORIGINS` must include every hostname you serve the app under (see [Environment variables](#environment-variables) above), or the browser gets 500s on every asset/API call.
 
 ### Grafana dashboard
 
