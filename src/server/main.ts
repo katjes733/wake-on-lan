@@ -23,9 +23,11 @@ if (process.env.DB_SSL === "true" && !process.env.DB_SSL_CA_PATH) {
 if (!process.env.REDIS_HOST) {
   throw new Error("REDIS_HOST environment variable is required");
 }
+if (!process.env.ALLOWED_ORIGINS) {
+  throw new Error("ALLOWED_ORIGINS environment variable is required");
+}
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
-  .split(",")
+const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
