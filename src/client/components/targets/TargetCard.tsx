@@ -44,6 +44,10 @@ export default function TargetCard({ target }: { target: ApiTarget }) {
     }
   };
 
+  const wakeDisabledReason = target.online
+    ? "Target already appears online"
+    : null;
+
   const shutdownDisabledReason = !target.agentConfig.shutdownEnabled
     ? "Shutdown is not enabled for this target — turn it on in Config"
     : !target.online
@@ -83,21 +87,28 @@ export default function TargetCard({ target }: { target: ApiTarget }) {
         )}
       </CardContent>
       <CardActions sx={{ px: 2, pb: 2, flexWrap: "wrap", gap: 1 }}>
-        <Button
-          variant="contained"
-          startIcon={
-            waking ? (
-              <CircularProgress size={16} color="inherit" />
-            ) : (
-              <PowerSettingsNewIcon />
-            )
-          }
-          onClick={handleWake}
-          disabled={waking}
-          fullWidth
+        <Tooltip
+          title={wakeDisabledReason ?? ""}
+          disableHoverListener={!wakeDisabledReason}
         >
-          Wake
-        </Button>
+          <span style={{ width: "100%" }}>
+            <Button
+              variant="contained"
+              startIcon={
+                waking ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : (
+                  <PowerSettingsNewIcon />
+                )
+              }
+              onClick={handleWake}
+              disabled={waking || Boolean(wakeDisabledReason)}
+              fullWidth
+            >
+              Wake
+            </Button>
+          </span>
+        </Tooltip>
         <Tooltip
           title={shutdownDisabledReason ?? ""}
           disableHoverListener={!shutdownDisabledReason}
