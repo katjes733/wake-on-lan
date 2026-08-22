@@ -35,7 +35,23 @@ export const TargetsProvider = ({ children }: { children: ReactNode }) => {
       () => refresh({ silent: true }),
       STATUS_POLL_MS,
     );
-    return () => clearInterval(interval);
+
+    // Browsers throttle or fully pause setInterval in backgrounded tabs, so
+    // a status change (e.g. a target shutting down) while the tab isn't
+    // focused can sit stale for well past STATUS_POLL_MS. Re-fetching the
+    // instant the tab becomes visible/focused again closes that gap without
+    // needing a manual reload.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh({ silent: true });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, [refresh]);
 
   const create = useCallback(async (input: TargetInput) => {
