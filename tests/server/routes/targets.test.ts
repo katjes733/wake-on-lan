@@ -18,6 +18,7 @@ const {
   mockUpsertAgentConfig,
   mockRecordHeartbeat,
   mockGetAgentStatus,
+  mockClearHeartbeat,
 } = vi.hoisted(() => ({
   mockListTargets: vi.fn(),
   mockGetTargetById: vi.fn(),
@@ -34,6 +35,7 @@ const {
   mockUpsertAgentConfig: vi.fn(),
   mockRecordHeartbeat: vi.fn(),
   mockGetAgentStatus: vi.fn(),
+  mockClearHeartbeat: vi.fn(),
 }));
 
 vi.mock("~/server/util/routes/targets", () => ({
@@ -67,6 +69,7 @@ vi.mock("~/server/util/agent/agentConfig", () => ({
 vi.mock("~/server/util/agent/agentStatus", () => ({
   recordHeartbeat: mockRecordHeartbeat,
   getAgentStatus: mockGetAgentStatus,
+  clearHeartbeat: mockClearHeartbeat,
 }));
 
 // Rate limiting talks to a real Redis client — irrelevant at this layer and
@@ -522,7 +525,7 @@ describe("targets router", () => {
       expect(res.body).toEqual({ shutdown: false });
     });
 
-    it("returns shutdown:true with triggeredAt when a fresh flag is consumed", async () => {
+    it("returns shutdown:true with triggeredAt when a fresh flag is consumed, and immediately clears the heartbeat", async () => {
       mockGetTargetById.mockResolvedValue(baseTarget);
       const triggeredAt = new Date("2026-01-01T00:00:01Z");
       mockConsumeShutdownFlag.mockResolvedValue({
@@ -539,6 +542,18 @@ describe("targets router", () => {
         shutdown: true,
         triggeredAt: triggeredAt.toISOString(),
       });
+      expect(mockClearHeartbeat).toHaveBeenCalledWith(baseTarget.id);
+    });
+
+    it("does not clear the heartbeat when there was nothing to consume", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeShutdownFlag.mockResolvedValue({ shutdown: false });
+
+      await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/shutdown-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(mockClearHeartbeat).not.toHaveBeenCalled();
     });
 
     it("already-consumed: a second call against the same flag returns shutdown:false", async () => {

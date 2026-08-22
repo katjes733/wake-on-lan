@@ -29,6 +29,24 @@ export async function recordHeartbeat(
   );
 }
 
+/**
+ * Marks the target offline immediately, rather than waiting for
+ * AGENT_STALE_THRESHOLD_SECONDS to pass with no heartbeat. Called right
+ * when a shutdown-flag consume succeeds — the server already knows at that
+ * exact moment the machine is about to power off; a real heartbeat will
+ * naturally resume once it next boots and the agent starts up again. A
+ * no-op if there's no agent_statuses row yet (nothing to clear).
+ */
+export async function clearHeartbeat(targetId: string): Promise<void> {
+  const ds = await AppDataSource.getInstance();
+  await ds.query(
+    `UPDATE ${qualifiedTable("agent_statuses")}
+       SET last_seen_at = NULL, modified_time = now()
+     WHERE target_id = $1;`,
+    [targetId],
+  );
+}
+
 export async function getAgentStatus(
   targetId: string,
 ): Promise<AgentStatusResult> {
