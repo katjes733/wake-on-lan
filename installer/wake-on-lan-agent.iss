@@ -47,6 +47,27 @@ begin
   Exec(Exe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+// StringChangeEx requires its first parameter to be a Unicode `String`, but
+// LoadStringFromFile/SaveStringToFile only work with `AnsiString` (they just
+// read/write raw bytes, with no encoding awareness at all) — mixing the two
+// on one variable is a genuine type mismatch in Inno Setup's Pascal Script,
+// not just a style choice. Stay in AnsiString the whole way through instead.
+function AnsiReplaceAll(const S, FromStr, ToStr: AnsiString): AnsiString;
+var
+  Work: AnsiString;
+  P: Integer;
+begin
+  Work := S;
+  P := Pos(FromStr, Work);
+  while P > 0 do
+  begin
+    Work := Copy(Work, 1, P - 1) + ToStr +
+      Copy(Work, P + Length(FromStr), Length(Work) - P - Length(FromStr) + 1);
+    P := Pos(FromStr, Work);
+  end;
+  Result := Work;
+end;
+
 // The XML template ships with a {{APP_DIR}} placeholder since it can't know
 // the real install path ahead of time (the user can change it at install
 // time) — substitute it here, then register the generated file.
@@ -56,7 +77,7 @@ var
   GeneratedPath: string;
 begin
   LoadStringFromFile(ExpandConstant('{app}\boot-hooks-task.xml'), XmlContent);
-  StringChangeEx(XmlContent, '{{APP_DIR}}', ExpandConstant('{app}'), True);
+  XmlContent := AnsiReplaceAll(XmlContent, '{{APP_DIR}}', AnsiString(ExpandConstant('{app}')));
   GeneratedPath := ExpandConstant('{app}\boot-hooks-task.generated.xml');
   SaveStringToFile(GeneratedPath, XmlContent, False);
   RunHidden(ExpandConstant('{sys}\schtasks.exe'),
