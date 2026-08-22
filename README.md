@@ -10,6 +10,10 @@
   - [HTTPS / Self-Signed Certificate](#https--self-signed-certificate)
   - [API contract for the boot-time consumer](#api-contract-for-the-boot-time-consumer)
   - [Known limitation](#known-limitation)
+  - [Status reporting and remote shutdown](#status-reporting-and-remote-shutdown)
+    - [Installing the Windows agent](#installing-the-windows-agent)
+    - [Agent configuration](#agent-configuration)
+    - [Security note on script references](#security-note-on-script-references)
   - [Deployment](#deployment)
     - [One-time setup](#one-time-setup)
     - [Day-to-day deploys](#day-to-day-deploys)
@@ -104,6 +108,7 @@ The full list is in `env/sample.env` / `env/sample.remote.env`. The essentials:
 | `SSL_KEY_PATH` / `SSL_CERT_PATH` | — | Paths to the TLS private key/certificate, relative to the project root. Required if `SSL_ENABLED=true` |
 | `WOL_DEFAULT_BROADCAST_ADDRESS` | — | Fallback broadcast address used when a target doesn't have one set |
 | `WOL_SEND_METHOD` | — | Leave as `auto` unless debugging — picks the best way to send the magic packet automatically |
+| `AGENT_STALE_THRESHOLD_SECONDS` | — | How long without a heartbeat before a target flips to "Offline" in the UI. Defaults to 90 — comfortably longer than the agent's own default 30s poll interval, so one missed tick doesn't flicker the status. |
 
 ## HTTPS / Self-Signed Certificate
 
@@ -162,6 +167,54 @@ Key behavior to design your script around: **each wake can only ever produce one
 ## Known limitation
 
 If the `woken: true` response above is lost in transit — say, the device's network drops right as it receives the answer — a retry will incorrectly see `woken: false`, because the app already marked that wake as used up on its end. This is a known, accepted gap for now (fixing it would mean adding a way for a retry to say "I mean the same attempt as last time," which adds real complexity for a home-network app where this kind of network hiccup is rare). If it turns out to matter in practice, that's worth revisiting.
+
+> **Note:** the section above documents the API contract itself, which is still accurate — but you no longer need to write that boot-time script yourself. A ready-made Windows agent (below) already implements it, plus live status reporting and remote shutdown.
+
+## Status reporting and remote shutdown
+
+A small background agent, installed once on a Windows target, reports whether it's currently online (shown as a chip on the Wake page) and lets you trigger a real shutdown from the same UI — the mirror image of waking it. It also absorbs the boot-time "was I just woken?" check from the section above, so you don't need a separate script for that anymore.
+
+It runs as two separate pieces, not one, because of a real Windows constraint: a background service runs isolated from the interactive desktop (Windows' "Session 0" isolation), so it can never reliably do anything that needs the actual logged-in session — which is exactly what a CEC/display script might need. Splitting the responsibilities means neither piece has to compromise:
+
+- **A Windows Service**, starting at boot, before anyone logs in — sends the heartbeat that drives the online/offline status, and polls for a pending shutdown. This is what makes "online" accurate even while the machine is still sitting at the lock screen.
+- **A Scheduled Task, firing at logon** (any user, running with their own rights, not the service's) — the only piece with real desktop-session access, so it's the one that checks "was I just woken?" and runs whatever local script you've configured.
+
+Both pieces talk to this app the same way the rest of it already works — pulling, never being pushed to: they poll for what to do, the server never opens a connection to the agent.
+
+### Installing the Windows agent
+
+1. Download the installer — either build it yourself (`bun run build-agent`, then compile `installer/wake-on-lan-agent.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) on a Windows machine), or grab the latest build from the `Build Agent Installer` GitHub Actions workflow's artifacts.
+2. Run the installer on the target machine. It sets up both the service and the scheduled task automatically — no separate steps.
+3. Edit `config.json` next to the installed exe (a `config.example.json` template is installed alongside it) with this machine's own values:
+
+   ```json
+   {
+     "serverBaseUrl": "https://your-app-hostname-or-ip:3001",
+     "targetId": "<this machine's target UUID, from this app's Config page>",
+     "defaultPollIntervalSeconds": 30,
+     "logFilePath": "agent.log"
+   }
+   ```
+
+   Point `serverBaseUrl` at a hostname with a real trusted certificate if you have one set up (see [Reaching the app via a friendlier local hostname](#reaching-the-app-via-a-friendlier-local-hostname)) — that way the agent doesn't need to skip certificate verification at all.
+4. Restart the service (`services.msc` → **WakeOnLanAgent** → Restart) so it picks up the new config, and log out/in once so the scheduled task also runs with it.
+5. Back in this app's Config page, open the target's **Agent Settings** (gear icon) and turn on whichever of "Allow remote shutdown" / "Detect Wake-on-LAN boots" you actually want — both start off by default.
+
+### Agent configuration
+
+Everything the agent needs beyond the three bootstrap values above (`serverBaseUrl`, `targetId`, poll interval/log path) lives in this app's own database, not on the machine — edited from the **Agent Settings** dialog in Config, fetched fresh by the agent on every check:
+
+| Setting | Purpose |
+| --- | --- |
+| Allow remote shutdown | Whether the Shutdown button on the Wake page (and the agent's own polling for it) does anything for this target. Off by default. |
+| Detect Wake-on-LAN boots | Whether the agent checks "was I just woken?" at all. Off by default. |
+| Script to run on every boot | An optional local script reference, run once per logon regardless of how the machine booted. |
+| Script to run when a WOL boot is detected | An optional local script reference, run only when the boot-detection check above says yes. |
+| Poll interval | Overrides the agent's own default heartbeat/shutdown-check interval. Leave blank unless you have a reason to change it. |
+
+### Security note on script references
+
+The two script fields above are stored in this app's database and edited through its (unauthenticated, LAN-trust) web UI — same trust model as the Wake button itself. They're never anything more than a path/reference: this app never sends script *content*, only a pointer to something that must already exist on the target machine. Anyone who can reach Config could redirect which existing local script gets run, but never inject new code that isn't already there.
 
 ## Deployment
 

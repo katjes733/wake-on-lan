@@ -1,0 +1,6 @@
+{
+  "serverBaseUrl": "https://wake-on-lan.example.com",
+  "targetId": "REPLACE-WITH-THIS-MACHINE-S-TARGET-UUID",
+  "defaultPollIntervalSeconds": 30,
+  "logFilePath": "agent.log"
+}

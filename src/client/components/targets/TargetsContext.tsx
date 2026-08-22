@@ -4,27 +4,38 @@ import * as targetsApi from "~/client/api/targetsApi";
 import type { ApiTarget, TargetInput } from "~/client/api/targetsApi";
 import { useNotification } from "~/client/components/notification/useNotification";
 
+// How often to silently re-fetch targets in the background so online/offline
+// status stays live without a manual refresh. "Silent" means it never
+// touches loading/error state — see refresh() below — so it doesn't flicker
+// the whole page into its loading spinner every tick.
+const STATUS_POLL_MS = 20_000;
+
 export const TargetsProvider = ({ children }: { children: ReactNode }) => {
   const [targets, setTargets] = useState<ApiTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { showNotification } = useNotification();
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const data = await targetsApi.listTargets();
       setTargets(data);
-      setError(null);
+      if (!opts?.silent) setError(null);
     } catch {
-      setError("Failed to load targets");
+      if (!opts?.silent) setError("Failed to load targets");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     refresh();
+    const interval = setInterval(
+      () => refresh({ silent: true }),
+      STATUS_POLL_MS,
+    );
+    return () => clearInterval(interval);
   }, [refresh]);
 
   const create = useCallback(async (input: TargetInput) => {
@@ -55,23 +66,52 @@ export const TargetsProvider = ({ children }: { children: ReactNode }) => {
 
   const wake = useCallback(
     async (id: string) => {
-      const result = await targetsApi.wakeTarget(id);
-      if (result.sent) {
-        showNotification("Wake packet sent", "success");
-      } else {
-        showNotification(
-          "Wake flag recorded, but sending the packet failed",
-          "warning",
-        );
+      try {
+        const result = await targetsApi.wakeTarget(id);
+        if (result.sent) {
+          showNotification("Wake packet sent", "success");
+        } else {
+          showNotification(
+            "Wake flag recorded, but sending the packet failed",
+            "warning",
+          );
+        }
+        return result;
+      } catch (err) {
+        showNotification("Failed to send wake request", "error");
+        throw err;
       }
-      return result;
+    },
+    [showNotification],
+  );
+
+  const shutdown = useCallback(
+    async (id: string) => {
+      try {
+        const result = await targetsApi.shutdownTarget(id);
+        showNotification("Shutdown requested", "success");
+        return result;
+      } catch (err) {
+        showNotification("Failed to request shutdown", "error");
+        throw err;
+      }
     },
     [showNotification],
   );
 
   return (
     <TargetsContext.Provider
-      value={{ targets, loading, error, refresh, create, update, remove, wake }}
+      value={{
+        targets,
+        loading,
+        error,
+        refresh,
+        create,
+        update,
+        remove,
+        wake,
+        shutdown,
+      }}
     >
       {children}
     </TargetsContext.Provider>

@@ -1,5 +1,14 @@
 import { httpClient } from "~/client/api/httpClient";
 
+export interface AgentConfig {
+  wolAware: boolean;
+  defaultScript?: string | null;
+  wolScript?: string | null;
+  shutdownEnabled: boolean;
+  pollIntervalSeconds?: number | null;
+  lokiPushUrl?: string | null;
+}
+
 export interface ApiTarget {
   id: string;
   name: string;
@@ -9,6 +18,10 @@ export interface ApiTarget {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+  lastSeenAt: string | null;
+  online: boolean;
+  agentVersion: string | null;
+  agentConfig: AgentConfig;
 }
 
 export interface TargetInput {
@@ -22,6 +35,10 @@ export interface TargetInput {
 export interface WakeResult {
   triggeredAt: string;
   sent: boolean;
+}
+
+export interface ShutdownResult {
+  triggeredAt: string;
 }
 
 export async function listTargets(): Promise<ApiTarget[]> {
@@ -48,5 +65,30 @@ export async function deleteTarget(id: string): Promise<void> {
 
 export async function wakeTarget(id: string): Promise<WakeResult> {
   const { data } = await httpClient.post<WakeResult>(`/targets/${id}/wake`);
+  return data;
+}
+
+export async function shutdownTarget(id: string): Promise<ShutdownResult> {
+  const { data } = await httpClient.post<ShutdownResult>(
+    `/targets/${id}/shutdown`,
+  );
+  return data;
+}
+
+export async function getAgentConfig(id: string): Promise<AgentConfig> {
+  const { data } = await httpClient.get<AgentConfig>(
+    `/targets/${id}/agent-config`,
+  );
+  return data;
+}
+
+export async function saveAgentConfig(
+  id: string,
+  config: AgentConfig,
+): Promise<AgentConfig> {
+  const { data } = await httpClient.put<AgentConfig>(
+    `/targets/${id}/agent-config`,
+    config,
+  );
   return data;
 }

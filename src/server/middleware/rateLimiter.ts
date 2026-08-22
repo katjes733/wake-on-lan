@@ -46,3 +46,36 @@ export const consumeLimiter = rateLimit({
   legacyHeaders: false,
   handler: logAndRespond("Too many consume requests, try again later"),
 });
+
+export const shutdownLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip ?? "unknown"),
+  store: redisStore("wol:rl:shutdown:"),
+  passOnStoreError: false,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: logAndRespond("Too many shutdown requests, try again later"),
+});
+
+export const shutdownConsumeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip ?? "unknown"),
+  store: redisStore("wol:rl:shutdown-consume:"),
+  passOnStoreError: false,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: logAndRespond("Too many consume requests, try again later"),
+});
+
+export const statusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip ?? "unknown"),
+  store: redisStore("wol:rl:status:"),
+  passOnStoreError: false,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: logAndRespond("Too many status requests, try again later"),
+});

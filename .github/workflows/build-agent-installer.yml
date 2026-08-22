@@ -1,0 +1,52 @@
+name: Build Agent Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/agent/**"
+      - "src/shared/**"
+      - "installer/**"
+
+jobs:
+  build:
+    # GitHub-hosted runner, deliberately distinct from deploy.yml's
+    # self-hosted NAS runner — different purpose (build a downloadable
+    # installer), different host, no reason to share one.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build agent binary
+        run: bun build --compile --minify --outfile=installer/dist/wake-on-lan-agent.exe src/agent/main.ts
+
+      - name: Fetch NSSM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer/vendor | Out-Null
+          Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile "nssm.zip"
+          Expand-Archive -Path "nssm.zip" -DestinationPath "nssm-extracted"
+          Copy-Item "nssm-extracted/nssm-2.24/win64/nssm.exe" "installer/vendor/nssm.exe"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\wake-on-lan-agent.iss
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wake-on-lan-agent-installer
+          path: installer/Output/*.exe

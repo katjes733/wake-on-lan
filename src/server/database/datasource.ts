@@ -3,6 +3,9 @@ import { checkServerIdentity, type PeerCertificate } from "tls";
 import { DataSource } from "typeorm";
 import { Target } from "~/server/database/models/target";
 import { WakeFlag } from "~/server/database/models/wakeFlag";
+import { ShutdownFlag } from "~/server/database/models/shutdownFlag";
+import { AgentConfig } from "~/server/database/models/agentConfig";
+import { AgentStatus } from "~/server/database/models/agentStatus";
 
 // TypeORM's own repository/query-builder APIs apply the DataSource's configured
 // `schema` automatically, but raw dataSource.query() calls bypass that entirely
@@ -60,7 +63,13 @@ class AppDataSource {
                     checkServerIdentity(process.env.DB_HOST!, cert),
                 } as any)
               : false,
-            entities: [Target, WakeFlag],
+            entities: [
+              Target,
+              WakeFlag,
+              ShutdownFlag,
+              AgentConfig,
+              AgentStatus,
+            ],
           })
         : (() => {
             throw new Error(

@@ -9,8 +9,10 @@ import Typography from "@mui/material/Typography";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { useTargets } from "~/client/components/targets/useTargets";
 import TargetFormDialog from "~/client/components/targets/TargetFormDialog";
+import AgentConfigDialog from "~/client/components/targets/AgentConfigDialog";
 import ConfirmDialog from "~/client/components/shared/ConfirmDialog";
 import { useNotification } from "~/client/components/notification/useNotification";
 import type { ApiTarget, TargetInput } from "~/client/api/targetsApi";
@@ -22,6 +24,9 @@ export default function ConfigPage() {
   const [editingTarget, setEditingTarget] = useState<ApiTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [agentConfigTarget, setAgentConfigTarget] = useState<ApiTarget | null>(
+    null,
+  );
 
   const openCreate = () => {
     setEditingTarget(null);
@@ -84,6 +89,13 @@ export default function ConfigPage() {
                 <Box sx={{ display: "flex", flexWrap: "wrap" }}>
                   <IconButton
                     edge="end"
+                    aria-label="agent settings"
+                    onClick={() => setAgentConfigTarget(target)}
+                  >
+                    <SettingsIcon />
+                  </IconButton>
+                  <IconButton
+                    edge="end"
                     aria-label="edit"
                     onClick={() => openEdit(target)}
                   >
@@ -112,6 +124,11 @@ export default function ConfigPage() {
         target={editingTarget}
         onClose={() => setFormOpen(false)}
         onSubmit={handleSubmit}
+      />
+      <AgentConfigDialog
+        open={Boolean(agentConfigTarget)}
+        target={agentConfigTarget}
+        onClose={() => setAgentConfigTarget(null)}
       />
       <ConfirmDialog
         open={Boolean(deleteTarget)}
