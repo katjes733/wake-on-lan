@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     - [Request flow](#request-flow)
     - [Wake trigger and consume flow](#wake-trigger-and-consume-flow)
     - [Windows agent](#windows-agent)
+    - [Discovery responder](#discovery-responder)
   - [Grafana dashboard](#grafana-dashboard)
   - [Testing](#testing)
     - [Test runner](#test-runner)
@@ -137,7 +138,20 @@ Express routes in `src/server/routes/` delegate to DB accessor functions in `src
 
 **`withinSeconds` for the boot-time `wol-flag/consume` check is computed from `os.uptime()`**, not a fixed constant (`src/agent/util/computeWolWithinSeconds.ts`, called from `bootHooks.ts`): `Math.ceil(os.uptime()) + BOOT_BUFFER_SECONDS`. This check runs at *login*, not raw boot, and the boot→login gap is not a rare edge case — waking a machine remotely well before physically logging in is the central use case this whole app exists for, so the gap can legitimately be tens of minutes. Deriving the window from the agent's own uptime (a duration, not an absolute timestamp) makes it exactly as large as it needs to be for that specific boot, with no cross-machine clock-sync dependency. `FlagConsumeSchema`'s `withinSeconds` cap was raised from `3600` to `14400` accordingly — only an unusually long multi-hour gap still hits it.
 
+**The installer no longer writes `config.json` at all** — the agent resolves its own bootstrap values (`src/agent/config.ts`'s `resolveAgentConfig`, called once from `main.ts` before dispatching to either mode):
+
+- `serverBaseUrl`, if absent, is filled in via `src/agent/discovery.ts`'s `discoverServer()` — a UDP broadcast to port `41920` (default, overridable via `discoveryPort` in `config.json` to match a non-default server-side `DISCOVERY_PORT`) carrying every local MAC address (`selfIdentify.ts`'s `getLocalMacAddresses()`). The discovered `serverBaseUrl` is built from the reply's *source address* (`rinfo.address`), never a self-reported address in the payload — a multi-homed server guessing its own address is less reliable than the address a reply actually arrived from.
+- `targetId`, if absent, comes either from the same discovery reply (the server resolves it by MAC in the same round trip, via `findTargetByMacAddress` — see `src/server/util/discovery/discoveryResponder.ts`) or, if `serverBaseUrl` was already known, a standalone `POST /api/v1/targets/resolve` call (`selfIdentify.ts`'s `resolveTargetId()`).
+- **A field already present in `config.json` is never re-resolved or overwritten** — this is deliberate, not an oversight: always re-resolving on every start would silently clobber a manual override (e.g. pointing at a trusted-cert hostname instead of a discovered raw IP). `resolveAgentConfig` only calls `saveConfig` at all when something was actually missing, so a fully-resolved file isn't touched (not even its key order) on a run where nothing needed resolving.
+- This directly fixed a real incident from the prior install-wizard approach: no `config.json` at all → `loadConfig()` threw `ENOENT` synchronously, before the agent's own logger existed, so nothing landed in `agent.log` either — the only visible symptom was NSSM reporting the service as **Paused** (NSSM's fault-state indicator for "the wrapped process crashed," not a literal pause). `resolveAgentConfig` (via `loadConfigOrEmpty`) now treats a missing file as the expected first-run state, not an error.
+
+**A raw-IP `serverBaseUrl` always skips TLS verification for that request** — `httpClient.ts`'s `fetchOptionsFor()` detects an IPv4-literal host via regex and adds `tls: { rejectUnauthorized: false }` (Bun's `BunFetchRequestInit`, a global ambient type from `bun-types`, not the standard DOM `RequestInit`). This isn't discovery-specific: a real CA-issued cert for a bare IP is never going to exist in this app's deployment model (Caddy-fronted access = hostname = trusted cert; anything else = this app's own self-signed cert, always) — confirmed by testing `fetch(url, { tls: { rejectUnauthorized: false } })` against the real deployed server (`"self signed certificate"` without the option, `200` with it). Every agent HTTP call, including `selfIdentify.ts`'s resolve call, goes through the shared `agentFetch()` wrapper specifically so this is never duplicated or forgotten on a new call site.
+
 The agent logs to a local file **and** pushes directly to Loki's HTTP push API (`src/agent/log.ts`) — no Docker log driver involved, since the agent isn't a container. The local file write always happens first and is the one thing that never depends on the network; the Loki push (`lokiPushUrl`, from the server-managed `AgentConfig`, not local config) is always best-effort/fire-and-forget. See [Grafana dashboard](#grafana-dashboard) for the resulting `{service="agent"}` stream selector, distinct from every other panel's `{container_name="wake-on-lan"}`.
+
+### Discovery responder
+
+`src/server/util/discovery/discoveryResponder.ts`, started from `main.ts` right after `server.listen(...)` — a `node:dgram` UDP listener (the same tool `sendMagicPacket.ts` uses to send, just receiving here) answering the agent's broadcast discovery requests. No auth: a reply leaks nothing beyond "a wake-on-lan server is reachable here," already discoverable by anyone on the LAN who could otherwise just probe the known port directly — consistent with this app's existing no-auth stance. `DISCOVERY_ENABLED=false` turns it off entirely; `DISCOVERY_PORT` overrides the default `41920` (must match whatever the agent's `config.json` sets via `discoveryPort` if changed).
 
 ## Grafana dashboard
 

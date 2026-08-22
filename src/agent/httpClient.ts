@@ -19,12 +19,37 @@ export interface ShutdownFlagConsumeResponse {
   triggeredAt?: string;
 }
 
+// A real CA-issued certificate for a bare IP literal is never going to
+// exist in this app's deployment model — Caddy-fronted access always uses
+// a real hostname with a real trusted cert; anything else (auto-discovered
+// or manually configured as a raw IP) is always this app's own self-signed
+// cert. Detecting that from the URL itself avoids needing to separately
+// track *why* a given serverBaseUrl is a raw IP.
+const IPV4_HOST_PATTERN = /^https:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?/;
+
+function fetchOptionsFor(
+  url: string,
+  init: BunFetchRequestInit = {},
+): BunFetchRequestInit {
+  return IPV4_HOST_PATTERN.test(url)
+    ? { ...init, tls: { rejectUnauthorized: false } }
+    : init;
+}
+
+/** Shared fetch wrapper — every agent HTTP call, including self-identification, goes through this so the raw-IP TLS handling above is never duplicated or forgotten. */
+export function agentFetch(
+  url: string,
+  init: BunFetchRequestInit = {},
+): Promise<Response> {
+  return fetch(url, fetchOptionsFor(url, init));
+}
+
 function targetUrl(config: AgentBootstrapConfig, subPath: string): string {
   return `${config.serverBaseUrl}/api/v1/targets/${config.targetId}${subPath}`;
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const res = await agentFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -38,7 +63,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 export async function getAgentConfig(
   config: AgentBootstrapConfig,
 ): Promise<AgentConfigResponse> {
-  const res = await fetch(targetUrl(config, "/agent-config"));
+  const res = await agentFetch(targetUrl(config, "/agent-config"));
   if (!res.ok) {
     throw new Error(`GET agent-config failed: ${res.status}`);
   }
@@ -49,7 +74,7 @@ export async function postStatus(
   config: AgentBootstrapConfig,
   body: { agentVersion?: string },
 ): Promise<void> {
-  const res = await fetch(targetUrl(config, "/status"), {
+  const res = await agentFetch(targetUrl(config, "/status"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

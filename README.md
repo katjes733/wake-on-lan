@@ -12,6 +12,7 @@
   - [Known limitation](#known-limitation)
   - [Status reporting and remote shutdown](#status-reporting-and-remote-shutdown)
     - [Installing the Windows agent](#installing-the-windows-agent)
+    - [Zero-touch discovery](#zero-touch-discovery)
     - [Agent configuration](#agent-configuration)
     - [Security note on script references](#security-note-on-script-references)
   - [Deployment](#deployment)
@@ -109,6 +110,8 @@ The full list is in `env/sample.env` / `env/sample.remote.env`. The essentials:
 | `WOL_DEFAULT_BROADCAST_ADDRESS` | — | Fallback broadcast address used when a target doesn't have one set |
 | `WOL_SEND_METHOD` | — | Leave as `auto` unless debugging — picks the best way to send the magic packet automatically |
 | `AGENT_STALE_THRESHOLD_SECONDS` | — | How long without a heartbeat before a target flips to "Offline" in the UI. Defaults to 90 — comfortably longer than the agent's own default 30s poll interval, so one missed tick doesn't flicker the status. |
+| `DISCOVERY_ENABLED` | — | Set to `false` to turn off the agent-discovery UDP responder entirely. Defaults on. |
+| `DISCOVERY_PORT` | — | UDP port the discovery responder listens on. Defaults to `41920` — change only if that conflicts with something else on your network (the agent would need the same value too, via its own `discoveryPort` config, to still find it). |
 
 ## HTTPS / Self-Signed Certificate
 
@@ -183,22 +186,21 @@ Both pieces talk to this app the same way the rest of it already works — pulli
 
 ### Installing the Windows agent
 
-1. Download the installer — either build it yourself (`bun run build-agent`, then compile `installer/wake-on-lan-agent.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) on a Windows machine), or grab the latest build from the `Build Agent Installer` GitHub Actions workflow's artifacts.
-2. Run the installer on the target machine. It sets up both the service and the scheduled task automatically — no separate steps.
-3. Edit `config.json` next to the installed exe (a `config.example.json` template is installed alongside it) with this machine's own values:
+1. **Create the target first** — in this app's Config page, add the machine you're about to install the agent on (name + MAC address is enough). The agent identifies itself to the server by its own MAC address, so this is the only setup step that has to happen before installing.
+2. Download the installer — either build it yourself (`bun run build-agent`, then compile `installer/wake-on-lan-agent.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) on a Windows machine), or grab the latest build from the `Build Agent Installer` GitHub Actions workflow's artifacts.
+3. Run the installer on the target machine. That's it — no configuration step, no server URL or ID to type in anywhere. It sets up both the service and the scheduled task, and the agent finds the server and identifies itself automatically the first time either one starts (see [Zero-touch discovery](#zero-touch-discovery) below).
+4. Back in this app's Config page, open the target's **Agent Settings** (gear icon) and turn on whichever of "Allow remote shutdown" / "Detect Wake-on-LAN boots" you actually want — both start off by default.
 
-   ```json
-   {
-     "serverBaseUrl": "https://your-app-hostname-or-ip:3001",
-     "targetId": "<this machine's target UUID, from this app's Config page>",
-     "defaultPollIntervalSeconds": 30,
-     "logFilePath": "agent.log"
-   }
-   ```
+### Zero-touch discovery
 
-   Point `serverBaseUrl` at a hostname with a real trusted certificate if you have one set up (see [Reaching the app via a friendlier local hostname](#reaching-the-app-via-a-friendlier-local-hostname)) — that way the agent doesn't need to skip certificate verification at all.
-4. Restart the service (`services.msc` → **WakeOnLanAgent** → Restart) so it picks up the new config, and log out/in once so the scheduled task also runs with it.
-5. Back in this app's Config page, open the target's **Agent Settings** (gear icon) and turn on whichever of "Allow remote shutdown" / "Detect Wake-on-LAN boots" you actually want — both start off by default.
+The agent needs exactly two things to talk to this app at all: the server's address, and which target row is *this* machine. Neither has to be typed in anywhere:
+
+- **Finding the server**: the agent broadcasts a small UDP request on the LAN; this app listens for it and replies directly, so the agent learns the address it's actually reachable at (port `41920` by default — override with `DISCOVERY_PORT`/`DISCOVERY_ENABLED` env vars if that ever conflicts with something else on your network).
+- **Identifying itself**: the same broadcast carries every local MAC address the agent can find, and the reply includes the matching target's ID if one of them is registered — the same MAC-uniqueness this app already relies on to reject duplicate targets.
+
+Both results get written into a `config.json` next to the installed exe (a `config.example.json` template is also installed, purely as a reference for the fields below) — once either value is present in that file, it's treated as final and never re-discovered, so a manual override sticks permanently. To force a rediscovery (e.g. the server's address genuinely changed), just delete the relevant field — or the whole file — and restart the service.
+
+If you'd rather skip discovery entirely (e.g. it doesn't reach across your particular network setup, or you want the agent to use a hostname with a real trusted certificate instead of the raw IP it would otherwise discover — see [Reaching the app via a friendlier local hostname](#reaching-the-app-via-a-friendlier-local-hostname)), just create `config.json` yourself with `serverBaseUrl` set; the agent then only needs to self-identify by MAC, skipping the broadcast step entirely. A raw-IP `serverBaseUrl` — discovered or manually set — always works without any certificate trust dance: the agent detects that case itself and skips certificate verification only for that specific connection.
 
 ### Agent configuration
 

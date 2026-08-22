@@ -24,8 +24,12 @@ AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+; Plain "x64" is deprecated as of Inno Setup 6.7 — "x64compatible" matches
+; both native x64 and ARM64 Windows installs that can run x64 code via
+; emulation, which is what we actually want (the agent binary itself is a
+; genuine x64 build with no separate ARM64 build).
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
 OutputBaseFilename=WakeOnLanAgentSetup
 Compression=lzma
@@ -101,6 +105,11 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    // No config.json to write here anymore — the agent itself resolves
+    // serverBaseUrl/targetId on first run (LAN discovery + MAC-based
+    // self-identification, src/agent/config.ts's resolveAgentConfig) and
+    // persists the result, so starting the service with no config.json
+    // present at all is the expected first-run state, not an error.
     InstallService;
     RegisterBootHooksTask;
   end;
@@ -122,3 +131,4 @@ end;
 [UninstallDelete]
 Type: files; Name: "{app}\boot-hooks-task.generated.xml"
 Type: files; Name: "{app}\agent.log"
+Type: files; Name: "{app}\config.json"
