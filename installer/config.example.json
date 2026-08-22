@@ -1,6 +1,8 @@
 {
+  "_comment": "Every field here is optional. With no config.json at all, the agent discovers the server on the LAN and identifies itself by MAC address automatically, then writes its own config.json. Only add fields here to override that — e.g. to force a specific hostname instead of a discovered raw IP, or to skip auto-discovery entirely.",
   "serverBaseUrl": "https://wake-on-lan.example.com",
   "targetId": "REPLACE-WITH-THIS-MACHINE-S-TARGET-UUID",
   "defaultPollIntervalSeconds": 30,
-  "logFilePath": "agent.log"
+  "logFilePath": "agent.log",
+  "discoveryPort": 41920
 }

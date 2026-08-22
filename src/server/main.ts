@@ -8,6 +8,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import { router as HealthRouter } from "~/server/routes/health";
 import { router as TargetsRouter } from "~/server/routes/targets";
+import { startDiscoveryResponder } from "~/server/util/discovery/discoveryResponder";
 
 // Fail-fast: required env vars are checked synchronously at module load,
 // not lazily on first request.
@@ -161,4 +162,5 @@ if (sslEnabled) {
 
 server.listen(port, () => {
   logger.info({ port, ssl: sslEnabled }, "Server listening");
+  startDiscoveryResponder(port);
 });

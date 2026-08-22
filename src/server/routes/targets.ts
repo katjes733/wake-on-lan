@@ -14,6 +14,7 @@ import {
 import { FlagConsumeSchema } from "~/shared/schemas/flagConsume";
 import { AgentConfigSchema } from "~/shared/schemas/agentConfig";
 import { AgentStatusSchema } from "~/shared/schemas/status";
+import { ResolveTargetSchema } from "~/shared/schemas/resolveTarget";
 import {
   listTargets,
   getTargetById,
@@ -130,6 +131,38 @@ router.post("/", validateBody(TargetCreateSchema), async (req, res, next) => {
     next(error);
   }
 });
+
+// Lets the agent identify itself to the server by MAC address instead of
+// needing a manually-copied target UUID — sends every local MAC it can
+// find, since the server-side match naturally filters to whichever one is
+// actually registered as a target. No rate limiter: read-only, called once
+// per agent process start, not a side-effecting endpoint.
+router.post(
+  "/resolve",
+  validateBody(ResolveTargetSchema),
+  async (req, res, next) => {
+    try {
+      for (const mac of req.body.macAddresses) {
+        const normalized = normalizeMacAddress(mac);
+        if (!normalized) continue;
+        const target = await findTargetByMacAddress(normalized);
+        if (target) {
+          apiLog.info(
+            { targetId: target.id },
+            "Target resolved by MAC address",
+          );
+          res.json({ targetId: target.id });
+          return;
+        }
+      }
+      res
+        .status(404)
+        .json({ error: "No target found for the given MAC address(es)" });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.patch(
   "/:id",

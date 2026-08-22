@@ -234,6 +234,46 @@ describe("targets router", () => {
     });
   });
 
+  describe("POST /resolve", () => {
+    it("rejects an empty macAddresses array with 400", async () => {
+      const res = await request(app)
+        .post("/api/v1/targets/resolve")
+        .send({ macAddresses: [] });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 when no MAC address matches any target", async () => {
+      mockFindTargetByMacAddress.mockResolvedValue(null);
+      const res = await request(app)
+        .post("/api/v1/targets/resolve")
+        .send({ macAddresses: ["AA:BB:CC:DD:EE:FF"] });
+      expect(res.status).toBe(404);
+    });
+
+    it("resolves to the matching target's id", async () => {
+      mockFindTargetByMacAddress.mockResolvedValue(baseTarget);
+      const res = await request(app)
+        .post("/api/v1/targets/resolve")
+        .send({ macAddresses: ["AA:BB:CC:DD:EE:FF"] });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ targetId: baseTarget.id });
+    });
+
+    it("checks every provided MAC address, not just the first", async () => {
+      mockFindTargetByMacAddress
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(baseTarget);
+      const res = await request(app)
+        .post("/api/v1/targets/resolve")
+        .send({
+          macAddresses: ["11:11:11:11:11:11", "AA:BB:CC:DD:EE:FF"],
+        });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ targetId: baseTarget.id });
+      expect(mockFindTargetByMacAddress).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("PATCH /:id", () => {
     it("returns 404 when the target does not exist", async () => {
       mockGetTargetById.mockResolvedValue(null);
