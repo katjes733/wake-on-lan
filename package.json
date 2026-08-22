@@ -9,7 +9,7 @@
     "docker:up": "docker-compose --env-file .env up -d",
     "docker:down": "docker-compose --env-file .env down",
     "build": "bun build src/server/main.ts --outdir build --target bun --minify",
-    "build-agent": "bun build --compile --minify --outfile=installer/dist/wake-on-lan-agent.exe src/agent/main.ts",
+    "build-agent": "bun run scripts/build-agent.ts",
     "eslint": "bun x eslint src tests",
     "eslint:fix": "bun eslint -- --quiet --fix",
     "prettier": "bun x prettier --check src/* tests/*",

@@ -27,7 +27,7 @@ jobs:
         run: bun install
 
       - name: Build agent binary
-        run: bun build --compile --minify --outfile=installer/dist/wake-on-lan-agent.exe src/agent/main.ts
+        run: bun run build-agent
 
       - name: Fetch NSSM
         shell: pwsh

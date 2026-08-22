@@ -24,6 +24,11 @@ AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+; Same icon as the web app's favicon (src/client/public/favicon.svg,
+; rasterized to installer/icon.ico) — used for the setup/uninstall exe and,
+; via UninstallDisplayIcon below, the Add/Remove Programs entry.
+SetupIconFile=icon.ico
+UninstallDisplayIcon={app}\wake-on-lan-agent.exe
 ; Plain "x64" is deprecated as of Inno Setup 6.7 — "x64compatible" matches
 ; both native x64 and ARM64 Windows installs that can run x64 code via
 ; emulation, which is what we actually want (the agent binary itself is a
