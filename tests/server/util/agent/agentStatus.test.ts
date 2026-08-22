@@ -7,7 +7,7 @@ vi.mock("~/server/database/datasource", () => ({
   qualifiedTable: (table: string) => `"wake_on_lan".${table}`,
 }));
 
-const { recordHeartbeat, getAgentStatus } =
+const { recordHeartbeat, getAgentStatus, clearHeartbeat } =
   await import("~/server/util/agent/agentStatus");
 
 describe("getAgentStatus", () => {
@@ -53,5 +53,20 @@ describe("recordHeartbeat", () => {
       "target-1",
       null,
     ]);
+  });
+});
+
+describe("clearHeartbeat", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("nulls out last_seen_at for the given target", async () => {
+    mockQuery.mockResolvedValueOnce([]);
+    await clearHeartbeat("target-1");
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("SET last_seen_at = NULL"),
+      ["target-1"],
+    );
   });
 });

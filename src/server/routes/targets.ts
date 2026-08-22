@@ -37,6 +37,7 @@ import {
 import {
   recordHeartbeat,
   getAgentStatus,
+  clearHeartbeat,
   type AgentStatusResult,
 } from "~/server/util/agent/agentStatus";
 import type { ITarget } from "~/server/database/models/target";
@@ -358,6 +359,12 @@ router.post(
         },
         "Shutdown flag consume checked",
       );
+      if (result.shutdown) {
+        // Don't wait for AGENT_STALE_THRESHOLD_SECONDS to elapse — the
+        // machine is about to power off, so reflect that immediately
+        // rather than leaving the UI showing "Online" for another ~90s.
+        await clearHeartbeat(target.id);
+      }
       res.json(result);
     } catch (error) {
       next(error);

@@ -127,6 +127,8 @@ Express routes in `src/server/routes/` delegate to DB accessor functions in `src
 
 `POST /api/v1/targets/:id/wol-flag/consume` is a single atomic `UPDATE ... RETURNING` (see `util/wol/wakeFlags.ts`) — no transaction needed, Postgres's MVCC makes the check-and-consume atomic on its own. `POST /api/v1/targets/:id/shutdown-flag/consume` (`util/wol/shutdownFlags.ts`) is the exact same pattern for shutdown, in its own dedicated table (`shutdown_flags`) rather than a shared/generalized one — this codebase prefers a dedicated entity+function pair per concern over one generic mechanism (see `WakeFlag`/`ShutdownFlag`).
 
+When `shutdown-flag/consume` returns `shutdown: true`, the route immediately calls `clearHeartbeat()` (`util/agent/agentStatus.ts`) to null out `last_seen_at` for that target. Without this, `online` stays derived purely from `AGENT_STALE_THRESHOLD_SECONDS` elapsing since the last heartbeat, so the UI would keep showing "Online" for up to that whole window after a real shutdown — the server already knows at that exact instant the machine is about to power off, so there's no reason to wait. A future heartbeat from the next boot naturally clears the null again.
+
 ### Windows agent
 
 `src/agent/` is a **separate compiled binary**, not part of the server — built via `bun build --compile --minify --outfile=... src/agent/main.ts` (native on the target OS; cross-compilable from any OS via `--target=bun-windows-x64`, verified). It ships in two modes, dispatched by a `--mode=service|boot-hooks` CLI flag on the one binary:
