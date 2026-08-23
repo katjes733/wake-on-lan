@@ -395,6 +395,32 @@ router.post(
   },
 );
 
+// Called by the agent's own SIGINT/SIGTERM/SIGBREAK handler (service.ts) as
+// it's being stopped — covers a regular OS shutdown/reboot/service restart,
+// none of which go through shutdown-flag/consume at all (that path is only
+// for shutdowns *we* requested). Best-effort on the agent's side: the OS
+// only gives a stopping process/service a short grace window, so this may
+// simply not arrive before the process is killed — the passive
+// AGENT_STALE_THRESHOLD_SECONDS timeout is still the fallback for that case.
+router.post(
+  "/:id/offline",
+  statusLimiter,
+  async (req: express.Request<{ id: string }>, res, next) => {
+    try {
+      const target = await getTargetById(req.params.id);
+      if (!target) {
+        res.status(404).json({ error: "Target not found" });
+        return;
+      }
+      await clearHeartbeat(target.id);
+      wolLog.info({ targetId: target.id }, "Agent reported going offline");
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 router.get(
   "/:id/agent-config",
   async (req: express.Request<{ id: string }>, res, next) => {

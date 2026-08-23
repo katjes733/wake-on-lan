@@ -3,14 +3,27 @@ import {
   getAgentConfig,
   postStatus,
   postShutdownFlagConsume,
+  postOffline,
 } from "~/agent/httpClient";
 import { createLogger, type AgentLogger } from "~/agent/log";
 import { evaluateShutdown } from "~/agent/util/evaluateShutdown";
+import { createShutdownHandler } from "~/agent/util/gracefulShutdown";
 import { AGENT_VERSION } from "~/agent/version";
 
 // A few multiples of the poll interval, so a single missed tick doesn't
 // immediately make the server think the flag went stale.
 const SHUTDOWN_WITHIN_SECONDS_MULTIPLIER = 3;
+
+// Kept short and well under NSSM's own stop-method escalation timeouts —
+// this is a best-effort courtesy call, not something worth risking a forced
+// TerminateProcess over if the network happens to be slow right then.
+const SHUTDOWN_NOTIFY_TIMEOUT_MS = 1500;
+
+// SIGINT/SIGBREAK are how NSSM (and Windows more generally) asks a console
+// process to stop — via a generated Ctrl+C/Ctrl+Break event — for both an
+// explicit service stop and a real OS shutdown/reboot. SIGTERM is included
+// for parity with how the loop is also run un-wrapped during local testing.
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGBREAK"] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,6 +58,19 @@ export async function runService(config: AgentBootstrapConfig): Promise<void> {
     logFilePath: config.logFilePath,
   });
   logger.log("info", {}, "Agent service started");
+
+  const handleShutdownSignal = createShutdownHandler(
+    {
+      postOffline: () => postOffline(config),
+      sleep,
+      exit: (code) => process.exit(code),
+      logger,
+    },
+    SHUTDOWN_NOTIFY_TIMEOUT_MS,
+  );
+  for (const signal of SHUTDOWN_SIGNALS) {
+    process.on(signal, () => handleShutdownSignal(signal));
+  }
 
   for (;;) {
     let pollIntervalSeconds = config.defaultPollIntervalSeconds;
