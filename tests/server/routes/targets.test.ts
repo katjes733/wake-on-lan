@@ -594,6 +594,26 @@ describe("targets router", () => {
     });
   });
 
+  describe("POST /:id/offline", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app).post(
+        `/api/v1/targets/${baseTarget.id}/offline`,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("clears the heartbeat and returns 204", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      const res = await request(app).post(
+        `/api/v1/targets/${baseTarget.id}/offline`,
+      );
+
+      expect(res.status).toBe(204);
+      expect(mockClearHeartbeat).toHaveBeenCalledWith(baseTarget.id);
+    });
+  });
+
   describe("GET /:id/agent-config", () => {
     it("returns 404 when the target does not exist", async () => {
       mockGetTargetById.mockResolvedValue(null);

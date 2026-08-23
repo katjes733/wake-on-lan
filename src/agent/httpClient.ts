@@ -99,3 +99,13 @@ export async function postShutdownFlagConsume(
     withinSeconds,
   });
 }
+
+/** Best-effort "I'm going offline now" beacon — see the shutdown-signal handler in service.ts. */
+export async function postOffline(config: AgentBootstrapConfig): Promise<void> {
+  const res = await agentFetch(targetUrl(config, "/offline"), {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(`POST offline failed: ${res.status}`);
+  }
+}
