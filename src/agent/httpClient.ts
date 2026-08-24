@@ -20,6 +20,11 @@ export interface ShutdownFlagConsumeResponse {
   triggeredAt?: string;
 }
 
+export interface ManualScriptFlagConsumeResponse {
+  triggered: boolean;
+  triggeredAt?: string;
+}
+
 // A real CA-issued certificate for a bare IP literal is never going to
 // exist in this app's deployment model — Caddy-fronted access always uses
 // a real hostname with a real trusted cert; anything else (auto-discovered
@@ -97,6 +102,15 @@ export async function postShutdownFlagConsume(
   withinSeconds: number,
 ): Promise<ShutdownFlagConsumeResponse> {
   return postJson(targetUrl(config, "/shutdown-flag/consume"), {
+    withinSeconds,
+  });
+}
+
+export async function postManualScriptFlagConsume(
+  config: AgentBootstrapConfig,
+  withinSeconds: number,
+): Promise<ManualScriptFlagConsumeResponse> {
+  return postJson(targetUrl(config, "/manual-script-flag/consume"), {
     withinSeconds,
   });
 }

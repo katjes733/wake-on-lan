@@ -21,6 +21,7 @@ describe("getAgentConfig", () => {
     expect(result).toEqual({
       wolAware: false,
       shutdownEnabled: false,
+      wakeWithScriptEnabled: false,
     });
   });
 
@@ -40,6 +41,7 @@ describe("getAgentConfig", () => {
       wolAware: true,
       wolScript: "C:\\Scripts\\cec-silent-boot.ps1",
       shutdownEnabled: true,
+      wakeWithScriptEnabled: false,
       pollIntervalSeconds: 45,
     });
   });
@@ -55,13 +57,18 @@ describe("upsertAgentConfig", () => {
     await upsertAgentConfig("target-1", {
       wolAware: true,
       shutdownEnabled: false,
+      wakeWithScriptEnabled: false,
     });
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining("ON CONFLICT"),
       [
         expect.any(String),
         "target-1",
-        JSON.stringify({ wolAware: true, shutdownEnabled: false }),
+        JSON.stringify({
+          wolAware: true,
+          shutdownEnabled: false,
+          wakeWithScriptEnabled: false,
+        }),
       ],
     );
   });

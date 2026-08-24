@@ -14,6 +14,8 @@ const {
   mockConsumeWakeFlag,
   mockArmShutdownFlag,
   mockConsumeShutdownFlag,
+  mockArmManualScriptFlag,
+  mockConsumeManualScriptFlag,
   mockGetAgentConfig,
   mockUpsertAgentConfig,
   mockRecordHeartbeat,
@@ -31,6 +33,8 @@ const {
   mockConsumeWakeFlag: vi.fn(),
   mockArmShutdownFlag: vi.fn(),
   mockConsumeShutdownFlag: vi.fn(),
+  mockArmManualScriptFlag: vi.fn(),
+  mockConsumeManualScriptFlag: vi.fn(),
   mockGetAgentConfig: vi.fn(),
   mockUpsertAgentConfig: vi.fn(),
   mockRecordHeartbeat: vi.fn(),
@@ -59,6 +63,11 @@ vi.mock("~/server/util/wol/wakeFlags", () => ({
 vi.mock("~/server/util/wol/shutdownFlags", () => ({
   armShutdownFlag: mockArmShutdownFlag,
   consumeShutdownFlag: mockConsumeShutdownFlag,
+}));
+
+vi.mock("~/server/util/wol/manualScriptFlag", () => ({
+  armManualScriptFlag: mockArmManualScriptFlag,
+  consumeManualScriptFlag: mockConsumeManualScriptFlag,
 }));
 
 vi.mock("~/server/util/agent/agentConfig", () => ({
@@ -126,6 +135,7 @@ const baseAgentConfig = {
   defaultScript: null,
   wolScript: null,
   shutdownEnabled: false,
+  wakeWithScriptEnabled: false,
   pollIntervalSeconds: null,
   lokiPushUrl: null,
 };
@@ -386,6 +396,73 @@ describe("targets router", () => {
       await request(app).post(`/api/v1/targets/${baseTarget.id}/wake`);
 
       expect(mockArmWakeFlag).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not arm the manual-script flag when forceManualBootScript is omitted", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockArmWakeFlag.mockResolvedValue({
+        triggeredAt: new Date("2026-01-01T00:00:01Z"),
+      });
+      mockSendMagicPacket.mockResolvedValue({ method: "dgram" });
+
+      await request(app).post(`/api/v1/targets/${baseTarget.id}/wake`);
+
+      expect(mockArmManualScriptFlag).not.toHaveBeenCalled();
+    });
+
+    it("arms the manual-script flag too when forceManualBootScript is true", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockArmWakeFlag.mockResolvedValue({
+        triggeredAt: new Date("2026-01-01T00:00:01Z"),
+      });
+      mockSendMagicPacket.mockResolvedValue({ method: "dgram" });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/wake`)
+        .send({ forceManualBootScript: true });
+
+      expect(res.status).toBe(200);
+      expect(mockArmManualScriptFlag).toHaveBeenCalledWith(baseTarget.id);
+    });
+  });
+
+  describe("POST /:id/manual-script-flag/consume", () => {
+    it("returns 404 when the target does not exist", async () => {
+      mockGetTargetById.mockResolvedValue(null);
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/manual-script-flag/consume`)
+        .send({ withinSeconds: 60 });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns triggered:false when nothing was armed", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeManualScriptFlag.mockResolvedValue({ triggered: false });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/manual-script-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ triggered: false });
+    });
+
+    it("returns triggered:true with triggeredAt when the flag was armed within the window", async () => {
+      mockGetTargetById.mockResolvedValue(baseTarget);
+      mockConsumeManualScriptFlag.mockResolvedValue({
+        triggered: true,
+        triggeredAt: new Date("2026-01-01T00:00:01Z"),
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/targets/${baseTarget.id}/manual-script-flag/consume`)
+        .send({ withinSeconds: 60 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        triggered: true,
+        triggeredAt: "2026-01-01T00:00:01.000Z",
+      });
     });
   });
 

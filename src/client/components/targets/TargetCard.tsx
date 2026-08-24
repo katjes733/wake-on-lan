@@ -17,6 +17,7 @@ import type { ApiTarget } from "~/client/api/targetsApi";
 export default function TargetCard({ target }: { target: ApiTarget }) {
   const { wake, shutdown } = useTargets();
   const [waking, setWaking] = useState(false);
+  const [wakingWithScript, setWakingWithScript] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -28,6 +29,17 @@ export default function TargetCard({ target }: { target: ApiTarget }) {
       // wake() already showed an error toast — nothing more to do here.
     } finally {
       setWaking(false);
+    }
+  };
+
+  const handleWakeWithScript = async () => {
+    setWakingWithScript(true);
+    try {
+      await wake(target.id, { forceManualBootScript: true });
+    } catch {
+      // wake() already showed an error toast — nothing more to do here.
+    } finally {
+      setWakingWithScript(false);
     }
   };
 
@@ -86,29 +98,60 @@ export default function TargetCard({ target }: { target: ApiTarget }) {
           </Typography>
         )}
       </CardContent>
-      <CardActions sx={{ px: 2, pb: 2, flexWrap: "wrap", gap: 1 }}>
-        <Tooltip
-          title={wakeDisabledReason ?? ""}
-          disableHoverListener={!wakeDisabledReason}
-        >
-          <span style={{ width: "100%" }}>
-            <Button
-              variant="contained"
-              startIcon={
-                waking ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : (
-                  <PowerSettingsNewIcon />
-                )
-              }
-              onClick={handleWake}
-              disabled={waking || Boolean(wakeDisabledReason)}
-              fullWidth
+      <CardActions
+        disableSpacing
+        sx={{ px: 2, pb: 2, flexWrap: "wrap", gap: 1 }}
+      >
+        <Box sx={{ display: "flex", gap: 1, width: "100%" }}>
+          <Tooltip
+            title={wakeDisabledReason ?? ""}
+            disableHoverListener={!wakeDisabledReason}
+          >
+            <span style={{ flex: 1 }}>
+              <Button
+                variant="contained"
+                startIcon={
+                  waking ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : (
+                    <PowerSettingsNewIcon />
+                  )
+                }
+                onClick={handleWake}
+                disabled={waking || Boolean(wakeDisabledReason)}
+                fullWidth
+              >
+                {target.agentConfig.wakeButtonLabel || "Wake"}
+              </Button>
+            </span>
+          </Tooltip>
+          {target.agentConfig.wakeWithScriptEnabled && (
+            <Tooltip
+              title={wakeDisabledReason ?? ""}
+              disableHoverListener={!wakeDisabledReason}
             >
-              Wake
-            </Button>
-          </span>
-        </Tooltip>
+              <span style={{ flex: 1 }}>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  startIcon={
+                    wakingWithScript ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <PowerSettingsNewIcon />
+                    )
+                  }
+                  onClick={handleWakeWithScript}
+                  disabled={wakingWithScript || Boolean(wakeDisabledReason)}
+                  fullWidth
+                >
+                  {target.agentConfig.wakeWithScriptButtonLabel ||
+                    "Wake + Script"}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+        </Box>
         <Tooltip
           title={shutdownDisabledReason ?? ""}
           disableHoverListener={!shutdownDisabledReason}

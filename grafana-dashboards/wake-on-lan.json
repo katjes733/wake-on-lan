@@ -1335,7 +1335,7 @@
             "transformations": []
           }
         },
-        "description": "Errors pushed directly from the Windows agent itself — most commonly \"Script execution failed\" (missing/failing defaultScript or wolScript) or a network error reaching the server. Only possible because the agent ships its own logs directly to Loki; previously these would have been invisible outside a local file on the machine nobody looks at.",
+        "description": "Errors pushed directly from the Windows agent itself — most commonly \"Script execution failed\" (missing/failing defaultScript, wolScript, or manualBootScript) or a network error reaching the server. Only possible because the agent ships its own logs directly to Loki; previously these would have been invisible outside a local file on the machine nobody looks at.",
         "id": 21,
         "links": [],
         "title": "Agent Errors",

@@ -18,6 +18,7 @@ import { AgentConfigSchema } from "~/shared/schemas/agentConfig";
 import * as targetsApi from "~/client/api/targetsApi";
 import type { ApiTarget, AgentConfig } from "~/client/api/targetsApi";
 import { useNotification } from "~/client/components/notification/useNotification";
+import { useTargets } from "~/client/components/targets/useTargets";
 
 interface AgentConfigDialogProps {
   open: boolean;
@@ -33,12 +34,17 @@ export default function AgentConfigDialog({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const { showNotification } = useNotification();
+  const { setAgentConfig } = useTargets();
   const [loading, setLoading] = useState(false);
   const [wolAware, setWolAware] = useState(false);
   const [defaultScript, setDefaultScript] = useState("");
   const [wolScript, setWolScript] = useState("");
   const [manualBootScript, setManualBootScript] = useState("");
   const [shutdownEnabled, setShutdownEnabled] = useState(false);
+  const [wakeWithScriptEnabled, setWakeWithScriptEnabled] = useState(false);
+  const [wakeButtonLabel, setWakeButtonLabel] = useState("");
+  const [wakeWithScriptButtonLabel, setWakeWithScriptButtonLabel] =
+    useState("");
   const [pollIntervalSeconds, setPollIntervalSeconds] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -55,6 +61,9 @@ export default function AgentConfigDialog({
         setWolScript(config.wolScript ?? "");
         setManualBootScript(config.manualBootScript ?? "");
         setShutdownEnabled(config.shutdownEnabled);
+        setWakeWithScriptEnabled(config.wakeWithScriptEnabled);
+        setWakeButtonLabel(config.wakeButtonLabel ?? "");
+        setWakeWithScriptButtonLabel(config.wakeWithScriptButtonLabel ?? "");
         setPollIntervalSeconds(
           config.pollIntervalSeconds != null
             ? String(config.pollIntervalSeconds)
@@ -75,6 +84,9 @@ export default function AgentConfigDialog({
       wolScript: wolScript || null,
       manualBootScript: manualBootScript || null,
       shutdownEnabled,
+      wakeWithScriptEnabled,
+      wakeButtonLabel: wakeButtonLabel || null,
+      wakeWithScriptButtonLabel: wakeWithScriptButtonLabel || null,
       pollIntervalSeconds: pollIntervalSeconds
         ? Number(pollIntervalSeconds)
         : null,
@@ -87,7 +99,11 @@ export default function AgentConfigDialog({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await targetsApi.saveAgentConfig(target.id, result.data as AgentConfig);
+      const saved = await targetsApi.saveAgentConfig(
+        target.id,
+        result.data as AgentConfig,
+      );
+      setAgentConfig(target.id, saved);
       showNotification("Agent settings saved", "success");
       onClose();
     } catch (err) {
@@ -166,8 +182,33 @@ export default function AgentConfigDialog({
               placeholder="C:\Scripts\manual-boot.ps1"
               value={manualBootScript}
               onChange={(e) => setManualBootScript(e.target.value)}
-              disabled={!wolAware}
-              helperText="Only runs when 'Detect Wake-on-LAN boots' is on and this boot was NOT triggered by Wake — the counterpart to the WOL-boot script above."
+              helperText="Runs when 'Detect Wake-on-LAN boots' is on and this boot was NOT triggered by Wake, or whenever the 'Wake + Script' button below is used instead of Wake — the counterpart to the WOL-boot script above."
+              fullWidth
+            />
+            <Divider />
+            <TextField
+              label="Wake button label (optional)"
+              placeholder="Wake"
+              value={wakeButtonLabel}
+              onChange={(e) => setWakeButtonLabel(e.target.value)}
+              fullWidth
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={wakeWithScriptEnabled}
+                  onChange={(e) => setWakeWithScriptEnabled(e.target.checked)}
+                />
+              }
+              label="Show a second Wake button that always runs the manual-boot script"
+            />
+            <TextField
+              label="'Wake + Script' button label (optional)"
+              placeholder="Wake + Script"
+              value={wakeWithScriptButtonLabel}
+              onChange={(e) => setWakeWithScriptButtonLabel(e.target.value)}
+              disabled={!wakeWithScriptEnabled}
+              helperText="Wakes the target exactly like the regular Wake button, but forces the manual-boot script above to run on the resulting boot even if it turns out to be WOL-triggered."
               fullWidth
             />
             {submitError && (

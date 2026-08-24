@@ -6,6 +6,9 @@ export interface AgentConfig {
   wolScript?: string | null;
   manualBootScript?: string | null;
   shutdownEnabled: boolean;
+  wakeWithScriptEnabled: boolean;
+  wakeButtonLabel?: string | null;
+  wakeWithScriptButtonLabel?: string | null;
   pollIntervalSeconds?: number | null;
   lokiPushUrl?: string | null;
 }
@@ -64,8 +67,14 @@ export async function deleteTarget(id: string): Promise<void> {
   await httpClient.delete(`/targets/${id}`);
 }
 
-export async function wakeTarget(id: string): Promise<WakeResult> {
-  const { data } = await httpClient.post<WakeResult>(`/targets/${id}/wake`);
+export async function wakeTarget(
+  id: string,
+  options?: { forceManualBootScript?: boolean },
+): Promise<WakeResult> {
+  const { data } = await httpClient.post<WakeResult>(
+    `/targets/${id}/wake`,
+    options,
+  );
   return data;
 }
 

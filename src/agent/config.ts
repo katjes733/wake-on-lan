@@ -21,8 +21,8 @@ const AgentFileConfigSchema = z.object({
 });
 export type AgentFileConfig = z.infer<typeof AgentFileConfigSchema>;
 
-// The fully-resolved shape service.ts/bootHooks.ts actually run against —
-// both fields required, guaranteed present by resolveAgentConfig().
+// The fully-resolved shape service.ts actually runs against — both fields
+// required, guaranteed present by resolveAgentConfig().
 const AgentBootstrapConfigSchema = AgentFileConfigSchema.extend({
   serverBaseUrl: z.string().url(),
   targetId: z.string().uuid(),
@@ -104,7 +104,7 @@ export async function resolveAgentConfig(
   };
   // Skip the write entirely when nothing was actually missing — avoids
   // touching the file (and its formatting/key order) on every single
-  // boot-hooks run, which happens on every logon, not just once.
+  // service start.
   if (!alreadyComplete) {
     saveConfig(configPath, resolvedConfig);
   }
