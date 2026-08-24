@@ -1,3 +1,5 @@
+import { scriptCommandFor } from "~/agent/util/scriptCommand";
+
 export interface RunScriptResult {
   ran: boolean;
   exitCode?: number;
@@ -12,6 +14,8 @@ export type SpawnFn = (cmd: string[]) => { exited: Promise<number> };
  * throwing — a bad or stale script reference must never crash the agent
  * itself. scriptPath is always a reference to something that must already
  * exist on this machine; this function never receives script content.
+ * scriptCommandFor() wraps .ps1/.bat/.cmd in their real interpreter, since
+ * none of those are directly spawnable the way a .exe is.
  */
 export async function runScriptIfConfigured(
   scriptPath: string | null | undefined,
@@ -19,7 +23,7 @@ export async function runScriptIfConfigured(
 ): Promise<RunScriptResult> {
   if (!scriptPath) return { ran: false };
   try {
-    const proc = spawn([scriptPath]);
+    const proc = spawn(scriptCommandFor(scriptPath));
     const exitCode = await proc.exited;
     return { ran: true, exitCode };
   } catch (err) {
