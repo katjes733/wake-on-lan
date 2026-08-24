@@ -9,11 +9,18 @@ describe("runScriptIfConfigured", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("runs the configured script and returns its exit code", async () => {
+  it("runs the configured script (wrapped in its interpreter) and returns its exit code", async () => {
     const spawn = vi.fn(() => ({ exited: Promise.resolve(0) }));
     const result = await runScriptIfConfigured("C:\\Scripts\\a.ps1", spawn);
     expect(result).toEqual({ ran: true, exitCode: 0 });
-    expect(spawn).toHaveBeenCalledWith(["C:\\Scripts\\a.ps1"]);
+    expect(spawn).toHaveBeenCalledWith([
+      "powershell.exe",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "C:\\Scripts\\a.ps1",
+    ]);
   });
 
   it("reports a non-zero exit code without treating it as an error", async () => {
