@@ -11,11 +11,10 @@ export default defineConfig({
     // (environmentMatchGlobs, the old way to scope this by directory, was
     // removed in Vitest v4 — this is the per-file replacement).
     environment: "node",
-    setupFiles: [
-      "./src/server/bootstrap/logger-global.ts",
-      "./tests/setup.ts",
-      "@testing-library/jest-dom/vitest",
-    ],
+    // tests/setup.ts itself imports "@testing-library/jest-dom/vitest" (see
+    // the comment there for why) — that's what actually registers jest-dom's
+    // matchers, so it doesn't need its own separate entry here too.
+    setupFiles: ["./src/server/bootstrap/logger-global.ts", "./tests/setup.ts"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts", "src/**/*.tsx"],
