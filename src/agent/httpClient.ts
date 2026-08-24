@@ -4,6 +4,7 @@ export interface AgentConfigResponse {
   wolAware: boolean;
   defaultScript?: string | null;
   wolScript?: string | null;
+  manualBootScript?: string | null;
   shutdownEnabled: boolean;
   pollIntervalSeconds?: number | null;
   lokiPushUrl?: string | null;

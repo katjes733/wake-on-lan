@@ -212,11 +212,20 @@ Everything the agent needs beyond the three bootstrap values above (`serverBaseU
 | Detect Wake-on-LAN boots | Whether the agent checks "was I just woken?" at all. Off by default. |
 | Script to run on every boot | An optional local script reference, run once per logon regardless of how the machine booted. |
 | Script to run when a WOL boot is detected | An optional local script reference, run only when the boot-detection check above says yes. |
+| Script to run on a manual (non-WOL) boot | The counterpart to the row above — an optional local script reference, run only when the boot-detection check says this boot was *not* triggered by Wake. |
 | Poll interval | Overrides the agent's own default heartbeat/shutdown-check interval. Leave blank unless you have a reason to change it. |
+
+All three script references may point at a `.ps1`, a `.bat`/`.cmd`, or an `.exe` — the agent wraps `.ps1`/`.bat`/`.cmd` in the right interpreter (`powershell.exe`/`cmd.exe`) automatically, since Windows can't run those directly the way it runs an `.exe`.
+
+A shutdown-side script isn't offered here — see [Reliable shutdown automation](#reliable-shutdown-automation) below for why, and what to use instead.
 
 ### Security note on script references
 
-The two script fields above are stored in this app's database and edited through its (unauthenticated, LAN-trust) web UI — same trust model as the Wake button itself. They're never anything more than a path/reference: this app never sends script *content*, only a pointer to something that must already exist on the target machine. Anyone who can reach Config could redirect which existing local script gets run, but never inject new code that isn't already there.
+The three script fields above are stored in this app's database and edited through its (unauthenticated, LAN-trust) web UI — same trust model as the Wake button itself. They're never anything more than a path/reference: this app never sends script *content*, only a pointer to something that must already exist on the target machine. Anyone who can reach Config could redirect which existing local script gets run, but never inject new code that isn't already there.
+
+### Reliable shutdown automation
+
+There's deliberately no "script to run on shutdown" setting. A script triggered from the app's own Shutdown button could run reliably (nothing forces the agent to exit until it says so), but a script triggered by a regular OS shutdown/reboot can't be: the agent only gets a short, OS-controlled grace window to notify the server it's going offline (see [Status reporting and remote shutdown](#status-reporting-and-remote-shutdown) above) before Windows can forcibly kill it, which isn't enough time for anything beyond a near-instant script — e.g. a USB/CEC adapter command, which needs a multi-second hardware handshake before it can even send anything. Rather than offer a setting that silently doesn't work on a manual shutdown, use a Windows **Group Policy shutdown script** (`gpedit.msc` → Computer Configuration → Windows Settings → Scripts → Shutdown) — Windows explicitly waits for those to finish before powering off, which is exactly the guarantee this app can't make from inside a process the OS is actively trying to kill.
 
 ## Deployment
 

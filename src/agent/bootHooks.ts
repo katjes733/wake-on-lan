@@ -65,6 +65,11 @@ export async function runBootHooks(
       if (woken && agentConfig.wolScript) {
         const result = await runScriptIfConfigured(agentConfig.wolScript);
         logScriptResult(logger, agentConfig.wolScript, result);
+      } else if (!woken && agentConfig.manualBootScript) {
+        const result = await runScriptIfConfigured(
+          agentConfig.manualBootScript,
+        );
+        logScriptResult(logger, agentConfig.manualBootScript, result);
       }
     }
   } catch (err) {

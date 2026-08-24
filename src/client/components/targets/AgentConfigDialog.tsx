@@ -37,6 +37,7 @@ export default function AgentConfigDialog({
   const [wolAware, setWolAware] = useState(false);
   const [defaultScript, setDefaultScript] = useState("");
   const [wolScript, setWolScript] = useState("");
+  const [manualBootScript, setManualBootScript] = useState("");
   const [shutdownEnabled, setShutdownEnabled] = useState(false);
   const [pollIntervalSeconds, setPollIntervalSeconds] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -52,6 +53,7 @@ export default function AgentConfigDialog({
         setWolAware(config.wolAware);
         setDefaultScript(config.defaultScript ?? "");
         setWolScript(config.wolScript ?? "");
+        setManualBootScript(config.manualBootScript ?? "");
         setShutdownEnabled(config.shutdownEnabled);
         setPollIntervalSeconds(
           config.pollIntervalSeconds != null
@@ -71,6 +73,7 @@ export default function AgentConfigDialog({
       wolAware,
       defaultScript: defaultScript || null,
       wolScript: wolScript || null,
+      manualBootScript: manualBootScript || null,
       shutdownEnabled,
       pollIntervalSeconds: pollIntervalSeconds
         ? Number(pollIntervalSeconds)
@@ -156,6 +159,15 @@ export default function AgentConfigDialog({
               onChange={(e) => setWolScript(e.target.value)}
               disabled={!wolAware}
               helperText="Only runs when 'Detect Wake-on-LAN boots' is on and this boot was actually triggered by Wake."
+              fullWidth
+            />
+            <TextField
+              label="Script to run on a manual (non-WOL) boot (optional)"
+              placeholder="C:\Scripts\manual-boot.ps1"
+              value={manualBootScript}
+              onChange={(e) => setManualBootScript(e.target.value)}
+              disabled={!wolAware}
+              helperText="Only runs when 'Detect Wake-on-LAN boots' is on and this boot was NOT triggered by Wake — the counterpart to the WOL-boot script above."
               fullWidth
             />
             {submitError && (
