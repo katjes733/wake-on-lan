@@ -15,6 +15,7 @@ import { FlagConsumeSchema } from "~/shared/schemas/flagConsume";
 import { AgentConfigSchema } from "~/shared/schemas/agentConfig";
 import { AgentStatusSchema } from "~/shared/schemas/status";
 import { ResolveTargetSchema } from "~/shared/schemas/resolveTarget";
+import { WakeRequestSchema } from "~/shared/schemas/wake";
 import {
   listTargets,
   getTargetById,
@@ -30,6 +31,10 @@ import {
   armShutdownFlag,
   consumeShutdownFlag,
 } from "~/server/util/wol/shutdownFlags";
+import {
+  armManualScriptFlag,
+  consumeManualScriptFlag,
+} from "~/server/util/wol/manualScriptFlag";
 import {
   getAgentConfig,
   upsertAgentConfig,
@@ -223,6 +228,7 @@ router.delete("/:id", async (req, res, next) => {
 router.post(
   "/:id/wake",
   wakeLimiter,
+  validateBody(WakeRequestSchema),
   async (req: express.Request<{ id: string }>, res, next) => {
     try {
       const target = await getTargetById(req.params.id);
@@ -241,6 +247,11 @@ router.post(
       // the reverse ordering could leave a real boot with no flag to check.
       const { triggeredAt } = await armWakeFlag(target.id);
       wolLog.info({ targetId: target.id, triggeredAt }, "Wake flag armed");
+
+      if (req.body.forceManualBootScript) {
+        await armManualScriptFlag(target.id);
+        wolLog.info({ targetId: target.id }, "Manual script flag armed");
+      }
 
       const broadcastAddress =
         target.broadcast_address ||
@@ -294,6 +305,36 @@ router.post(
           result: result.woken ? "woken" : "not_woken",
         },
         "Wake flag consume checked",
+      );
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/:id/manual-script-flag/consume",
+  consumeLimiter,
+  validateBody(FlagConsumeSchema),
+  async (req: express.Request<{ id: string }>, res, next) => {
+    try {
+      const target = await getTargetById(req.params.id);
+      if (!target) {
+        res.status(404).json({ error: "Target not found" });
+        return;
+      }
+      const result = await consumeManualScriptFlag(
+        target.id,
+        req.body.withinSeconds,
+      );
+      wolLog.info(
+        {
+          targetId: target.id,
+          withinSeconds: req.body.withinSeconds,
+          result: result.triggered ? "triggered" : "not_triggered",
+        },
+        "Manual script flag consume checked",
       );
       res.json(result);
     } catch (error) {

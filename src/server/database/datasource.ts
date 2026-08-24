@@ -4,6 +4,7 @@ import { DataSource } from "typeorm";
 import { Target } from "~/server/database/models/target";
 import { WakeFlag } from "~/server/database/models/wakeFlag";
 import { ShutdownFlag } from "~/server/database/models/shutdownFlag";
+import { ManualScriptFlag } from "~/server/database/models/manualScriptFlag";
 import { AgentConfig } from "~/server/database/models/agentConfig";
 import { AgentStatus } from "~/server/database/models/agentStatus";
 
@@ -67,6 +68,7 @@ class AppDataSource {
               Target,
               WakeFlag,
               ShutdownFlag,
+              ManualScriptFlag,
               AgentConfig,
               AgentStatus,
             ],

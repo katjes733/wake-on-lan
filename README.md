@@ -175,20 +175,17 @@ If the `woken: true` response above is lost in transit — say, the device's net
 
 ## Status reporting and remote shutdown
 
-A small background agent, installed once on a Windows target, reports whether it's currently online (shown as a chip on the Wake page) and lets you trigger a real shutdown from the same UI — the mirror image of waking it. It also absorbs the boot-time "was I just woken?" check from the section above, so you don't need a separate script for that anymore.
+A small background agent, installed once on a Windows target, reports whether it's currently online (shown as a chip on the Wake page) and lets you trigger a real shutdown from the same UI — the mirror image of waking it. It also absorbs the boot-time "was I just woken?" check from the section above, so you don't need a separate script for that anymore, and can run local scripts on boot (see [Agent configuration](#agent-configuration) below).
 
-It runs as two separate pieces, not one, because of a real Windows constraint: a background service runs isolated from the interactive desktop (Windows' "Session 0" isolation), so it can never reliably do anything that needs the actual logged-in session — which is exactly what a CEC/display script might need. Splitting the responsibilities means neither piece has to compromise:
+It's a single Windows Service, starting at boot before anyone logs in. This wasn't the original design — an earlier version split script execution into a separate Scheduled Task firing at logon, reasoning that a background service running isolated from the interactive desktop (Windows' "Session 0" isolation) couldn't reliably do anything a local script might need. In practice, that concern didn't hold up: script execution here is local automation (running a `.ps1`/`.bat`/`.exe`, talking to hardware over USB/serial, etc.), not anything that actually needs a real desktop session — and for a script meant to bring up a display, waiting for a logon before running it is backwards, since nobody can see a login screen that isn't lit up yet. One piece, running continuously from boot, is both simpler and correctly ordered.
 
-- **A Windows Service**, starting at boot, before anyone logs in — sends the heartbeat that drives the online/offline status, and polls for a pending shutdown. This is what makes "online" accurate even while the machine is still sitting at the lock screen.
-- **A Scheduled Task, firing at logon** (any user, running with their own rights, not the service's) — the only piece with real desktop-session access, so it's the one that checks "was I just woken?" and runs whatever local script you've configured.
-
-Both pieces talk to this app the same way the rest of it already works — pulling, never being pushed to: they poll for what to do, the server never opens a connection to the agent.
+The agent talks to this app the same way the rest of it already works — pulling, never being pushed to: it polls for what to do, the server never opens a connection to it.
 
 ### Installing the Windows agent
 
 1. **Create the target first** — in this app's Config page, add the machine you're about to install the agent on (name + MAC address is enough). The agent identifies itself to the server by its own MAC address, so this is the only setup step that has to happen before installing.
 2. Download the installer — either build it yourself (`bun run build-agent`, then compile `installer/wake-on-lan-agent.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) on a Windows machine), or grab the latest build from the `Build Agent Installer` GitHub Actions workflow's artifacts.
-3. Run the installer on the target machine. That's it — no configuration step, no server URL or ID to type in anywhere. It sets up both the service and the scheduled task, and the agent finds the server and identifies itself automatically the first time either one starts (see [Zero-touch discovery](#zero-touch-discovery) below).
+3. Run the installer on the target machine. That's it — no configuration step, no server URL or ID to type in anywhere. It sets up the service, and the agent finds the server and identifies itself automatically the first time it starts (see [Zero-touch discovery](#zero-touch-discovery) below).
 4. Back in this app's Config page, open the target's **Agent Settings** (gear icon) and turn on whichever of "Allow remote shutdown" / "Detect Wake-on-LAN boots" you actually want — both start off by default.
 
 ### Zero-touch discovery
@@ -210,13 +207,25 @@ Everything the agent needs beyond the three bootstrap values above (`serverBaseU
 | --- | --- |
 | Allow remote shutdown | Whether the Shutdown button on the Wake page (and the agent's own polling for it) does anything for this target. Off by default. |
 | Detect Wake-on-LAN boots | Whether the agent checks "was I just woken?" at all. Off by default. |
-| Script to run on every boot | An optional local script reference, run once per logon regardless of how the machine booted. |
+| Script to run on every boot | An optional local script reference, run once at service startup on every boot, regardless of how the machine booted. |
 | Script to run when a WOL boot is detected | An optional local script reference, run only when the boot-detection check above says yes. |
+| Script to run on a manual (non-WOL) boot | The counterpart to the row above — an optional local script reference, run only when the boot-detection check says this boot was *not* triggered by Wake. Also runs whenever the "Wake + Script" button (below) is used instead of the regular Wake button, regardless of that check. |
+| Wake button label | Optional custom text for the regular Wake button. Defaults to "Wake". |
+| Show "Wake + Script" button | Adds a second button next to Wake that sends the exact same magic packet, but also forces the manual-boot script above to run on the resulting boot — useful when you specifically want that script's effect (e.g. turning on a display) even though this particular wake is WOL-triggered, which would otherwise skip it. Off by default. |
+| "Wake + Script" button label | Optional custom text for that second button. Defaults to "Wake + Script". |
 | Poll interval | Overrides the agent's own default heartbeat/shutdown-check interval. Leave blank unless you have a reason to change it. |
+
+All three script references may point at a `.ps1`, a `.bat`/`.cmd`, or an `.exe` — the agent wraps `.ps1`/`.bat`/`.cmd` in the right interpreter (`powershell.exe`/`cmd.exe`) automatically, since Windows can't run those directly the way it runs an `.exe`.
+
+A shutdown-side script isn't offered here — see [Reliable shutdown automation](#reliable-shutdown-automation) below for why, and what to use instead.
 
 ### Security note on script references
 
-The two script fields above are stored in this app's database and edited through its (unauthenticated, LAN-trust) web UI — same trust model as the Wake button itself. They're never anything more than a path/reference: this app never sends script *content*, only a pointer to something that must already exist on the target machine. Anyone who can reach Config could redirect which existing local script gets run, but never inject new code that isn't already there.
+The three script fields above are stored in this app's database and edited through its (unauthenticated, LAN-trust) web UI — same trust model as the Wake button itself. They're never anything more than a path/reference: this app never sends script *content*, only a pointer to something that must already exist on the target machine. Anyone who can reach Config could redirect which existing local script gets run, but never inject new code that isn't already there.
+
+### Reliable shutdown automation
+
+There's deliberately no "script to run on shutdown" setting. A script triggered from the app's own Shutdown button could run reliably (nothing forces the agent to exit until it says so), but a script triggered by a regular OS shutdown/reboot can't be: the agent only gets a short, OS-controlled grace window to notify the server it's going offline (see [Status reporting and remote shutdown](#status-reporting-and-remote-shutdown) above) before Windows can forcibly kill it, which isn't enough time for anything beyond a near-instant script — e.g. a USB/CEC adapter command, which needs a multi-second hardware handshake before it can even send anything. Rather than offer a setting that silently doesn't work on a manual shutdown, use a Windows **Group Policy shutdown script** (`gpedit.msc` → Computer Configuration → Windows Settings → Scripts → Shutdown) — Windows explicitly waits for those to finish before powering off, which is exactly the guarantee this app can't make from inside a process the OS is actively trying to kill.
 
 ## Deployment
 

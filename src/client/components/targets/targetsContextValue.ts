@@ -4,6 +4,7 @@ import type {
   TargetInput,
   WakeResult,
   ShutdownResult,
+  AgentConfig,
 } from "~/client/api/targetsApi";
 
 export type TargetsContextType = {
@@ -14,8 +15,12 @@ export type TargetsContextType = {
   create: (input: TargetInput) => Promise<ApiTarget>;
   update: (id: string, input: Partial<TargetInput>) => Promise<ApiTarget>;
   remove: (id: string) => Promise<void>;
-  wake: (id: string) => Promise<WakeResult>;
+  wake: (
+    id: string,
+    options?: { forceManualBootScript?: boolean },
+  ) => Promise<WakeResult>;
   shutdown: (id: string) => Promise<ShutdownResult>;
+  setAgentConfig: (id: string, config: AgentConfig) => void;
 };
 
 const notMounted = () => {
@@ -32,4 +37,5 @@ export const TargetsContext = createContext<TargetsContextType>({
   remove: notMounted,
   wake: notMounted,
   shutdown: notMounted,
+  setAgentConfig: notMounted,
 });

@@ -4,6 +4,7 @@ export interface AgentConfigResponse {
   wolAware: boolean;
   defaultScript?: string | null;
   wolScript?: string | null;
+  manualBootScript?: string | null;
   shutdownEnabled: boolean;
   pollIntervalSeconds?: number | null;
   lokiPushUrl?: string | null;
@@ -16,6 +17,11 @@ export interface WolFlagConsumeResponse {
 
 export interface ShutdownFlagConsumeResponse {
   shutdown: boolean;
+  triggeredAt?: string;
+}
+
+export interface ManualScriptFlagConsumeResponse {
+  triggered: boolean;
   triggeredAt?: string;
 }
 
@@ -96,6 +102,15 @@ export async function postShutdownFlagConsume(
   withinSeconds: number,
 ): Promise<ShutdownFlagConsumeResponse> {
   return postJson(targetUrl(config, "/shutdown-flag/consume"), {
+    withinSeconds,
+  });
+}
+
+export async function postManualScriptFlagConsume(
+  config: AgentBootstrapConfig,
+  withinSeconds: number,
+): Promise<ManualScriptFlagConsumeResponse> {
+  return postJson(targetUrl(config, "/manual-script-flag/consume"), {
     withinSeconds,
   });
 }

@@ -1,5 +1,15 @@
 import { vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
+// Side-effect import: registers jest-dom's matchers (toBeInTheDocument(),
+// toHaveValue(), etc.) with Vitest's `expect` at runtime — this is also
+// listed directly in vitest.config.ts's setupFiles, so the registration
+// itself doesn't depend on this import. What this import IS needed for is
+// the *type* side: it's the one place in the whole program that pulls in
+// jest-dom's ambient augmentation of Vitest's `Assertion` interface, so
+// `tsc` recognizes those matchers everywhere else. Safe for non-DOM
+// (node-environment) tests too — it only defines matcher functions, never
+// touches `document` at import time.
+import "@testing-library/jest-dom/vitest";
 
 // ---------------------------------------------------------------------------
 // Logger silencing — applies to every test automatically.

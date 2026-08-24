@@ -1,13 +1,21 @@
+import os from "os";
 import type { AgentBootstrapConfig } from "~/agent/config";
 import {
   getAgentConfig,
   postStatus,
   postShutdownFlagConsume,
   postOffline,
+  postWolFlagConsume,
+  postManualScriptFlagConsume,
 } from "~/agent/httpClient";
 import { createLogger, type AgentLogger } from "~/agent/log";
 import { evaluateShutdown } from "~/agent/util/evaluateShutdown";
 import { createShutdownHandler } from "~/agent/util/gracefulShutdown";
+import { computeWolWithinSeconds } from "~/agent/util/computeWolWithinSeconds";
+import {
+  runScriptIfConfigured,
+  type RunScriptResult,
+} from "~/agent/util/runScriptIfConfigured";
 import { AGENT_VERSION } from "~/agent/version";
 
 // A few multiples of the poll interval, so a single missed tick doesn't
@@ -25,8 +33,35 @@ const SHUTDOWN_NOTIFY_TIMEOUT_MS = 1500;
 // for parity with how the loop is also run un-wrapped during local testing.
 const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGBREAK"] as const;
 
+// Covers only the small, hardware-dependent gap between the magic packet
+// arriving and Windows finishing POST/boot up to this service actually
+// starting — the service starts automatically at boot, before any login,
+// so unlike a logon-triggered check there's no separate boot→login gap to
+// account for on top of that.
+const BOOT_BUFFER_SECONDS = 90;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function logScriptResult(
+  logger: AgentLogger,
+  script: string,
+  result: RunScriptResult,
+): void {
+  if (result.error) {
+    logger.log(
+      "error",
+      { script, err: result.error },
+      "Script execution failed",
+    );
+  } else if (result.ran) {
+    logger.log(
+      "info",
+      { script, exitCode: result.exitCode },
+      "Script executed",
+    );
+  }
 }
 
 /**
@@ -48,9 +83,62 @@ async function shutDownMachine(logger: AgentLogger): Promise<void> {
 }
 
 /**
- * SYSTEM service, NSSM-wrapped, starts at boot. Heartbeat + shutdown-poll
- * only — never touches scripts or wol-flag/consume, since those need real
- * desktop-session access this mode doesn't have (see bootHooks.ts).
+ * Runs once, right at service startup, before the perpetual loop below.
+ * Deliberately part of the SYSTEM service rather than a separate
+ * per-logon task: local script/hardware automation (e.g. a CEC command)
+ * has no real need for desktop-session access, and a script meant to
+ * bring up a display needs to run *before* anyone could see a login
+ * screen — gating it on a logon having already happened is backwards.
+ */
+async function runBootTimeScripts(
+  config: AgentBootstrapConfig,
+  logger: AgentLogger,
+): Promise<void> {
+  const agentConfig = await getAgentConfig(config);
+  logger.setLokiPushUrl(agentConfig.lokiPushUrl);
+
+  if (agentConfig.defaultScript) {
+    const result = await runScriptIfConfigured(agentConfig.defaultScript);
+    logScriptResult(logger, agentConfig.defaultScript, result);
+  }
+
+  const withinSeconds = computeWolWithinSeconds(
+    os.uptime(),
+    BOOT_BUFFER_SECONDS,
+  );
+
+  // Checked unconditionally, independent of wolAware below — the "wake
+  // with script" button (AgentConfig.wakeWithScriptEnabled) forces
+  // manualBootScript to run on this boot regardless of whether it turns
+  // out to be WOL-triggered, so it can't be gated on the very detection
+  // it's meant to override.
+  let ranManualBootScript = false;
+  const { triggered: forcedManualScript } = await postManualScriptFlagConsume(
+    config,
+    withinSeconds,
+  );
+  if (forcedManualScript && agentConfig.manualBootScript) {
+    const result = await runScriptIfConfigured(agentConfig.manualBootScript);
+    logScriptResult(logger, agentConfig.manualBootScript, result);
+    ranManualBootScript = true;
+  }
+
+  if (agentConfig.wolAware) {
+    const { woken } = await postWolFlagConsume(config, withinSeconds);
+    if (woken && agentConfig.wolScript) {
+      const result = await runScriptIfConfigured(agentConfig.wolScript);
+      logScriptResult(logger, agentConfig.wolScript, result);
+    } else if (!woken && !ranManualBootScript && agentConfig.manualBootScript) {
+      const result = await runScriptIfConfigured(agentConfig.manualBootScript);
+      logScriptResult(logger, agentConfig.manualBootScript, result);
+    }
+  }
+}
+
+/**
+ * SYSTEM service, NSSM-wrapped, starts at boot. Runs the boot-time script
+ * checks once, then loops forever sending heartbeats and polling for a
+ * pending shutdown.
  */
 export async function runService(config: AgentBootstrapConfig): Promise<void> {
   const logger = createLogger({
@@ -70,6 +158,16 @@ export async function runService(config: AgentBootstrapConfig): Promise<void> {
   );
   for (const signal of SHUTDOWN_SIGNALS) {
     process.on(signal, () => handleShutdownSignal(signal));
+  }
+
+  try {
+    await runBootTimeScripts(config, logger);
+  } catch (err) {
+    logger.log(
+      "error",
+      { err: err instanceof Error ? err.message : String(err) },
+      "Boot-time script check failed",
+    );
   }
 
   for (;;) {

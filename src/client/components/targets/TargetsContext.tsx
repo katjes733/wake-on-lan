@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { TargetsContext } from "./targetsContextValue";
 import * as targetsApi from "~/client/api/targetsApi";
-import type { ApiTarget, TargetInput } from "~/client/api/targetsApi";
+import type {
+  ApiTarget,
+  TargetInput,
+  AgentConfig,
+} from "~/client/api/targetsApi";
 import { useNotification } from "~/client/components/notification/useNotification";
 
 // How often to silently re-fetch targets in the background so online/offline
@@ -80,10 +84,21 @@ export const TargetsProvider = ({ children }: { children: ReactNode }) => {
     setTargets((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // AgentConfigDialog saves via targetsApi directly (it's not a Target
+  // field), so this just patches the already-saved result into local state
+  // — otherwise the card would keep showing the pre-save agentConfig (e.g.
+  // a newly-enabled wakeWithScriptEnabled button) until the next silent
+  // poll or a manual reload.
+  const setAgentConfig = useCallback((id: string, config: AgentConfig) => {
+    setTargets((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, agentConfig: config } : t)),
+    );
+  }, []);
+
   const wake = useCallback(
-    async (id: string) => {
+    async (id: string, options?: { forceManualBootScript?: boolean }) => {
       try {
-        const result = await targetsApi.wakeTarget(id);
+        const result = await targetsApi.wakeTarget(id, options);
         if (result.sent) {
           showNotification("Wake packet sent", "success");
         } else {
@@ -127,6 +142,7 @@ export const TargetsProvider = ({ children }: { children: ReactNode }) => {
         remove,
         wake,
         shutdown,
+        setAgentConfig,
       }}
     >
       {children}
